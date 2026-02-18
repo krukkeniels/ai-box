@@ -1,0 +1,112 @@
+# =============================================================================
+# AI-Box Full Variant Image ("Kitchen Sink")
+# =============================================================================
+# Extends the base image with Java 21, Node.js 20, and Python extras (venv,
+# Poetry) for polyglot development sandboxes that need multiple runtimes.
+# =============================================================================
+
+FROM harbor.internal/aibox/base:24.04
+
+LABEL maintainer="platform-team@aibox.internal" \
+      version="24.04" \
+      description="AI-Box full developer sandbox (Java 21 + Node 20 + Python extras)" \
+      org.opencontainers.image.source="https://git.internal/aibox/aibox-images"
+
+USER root
+
+# ---------------------------------------------------------------------------
+# Common APT dependencies for all language repos below
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       gpg \
+       apt-transport-https \
+       unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Eclipse Temurin JDK 21
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public \
+       | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb noble main" \
+       > /etc/apt/sources.list.d/adoptium.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       temurin-21-jdk \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+# Maven 3.9.x
+# ---------------------------------------------------------------------------
+ARG MAVEN_VERSION=3.9.9
+RUN curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+        | tar -xz -C /opt \
+    && ln -s "/opt/apache-maven-${MAVEN_VERSION}" /opt/maven
+
+ENV MAVEN_HOME=/opt/maven
+ENV PATH="${MAVEN_HOME}/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+# Gradle 8.x
+# ---------------------------------------------------------------------------
+ARG GRADLE_VERSION=8.12
+RUN curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+        -o /tmp/gradle.zip \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && ln -s "/opt/gradle-${GRADLE_VERSION}" /opt/gradle \
+    && rm /tmp/gradle.zip
+
+ENV GRADLE_HOME=/opt/gradle
+ENV PATH="${GRADLE_HOME}/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+# Node.js 20 LTS
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+       | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+       > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Yarn (global via npm)
+# ---------------------------------------------------------------------------
+RUN npm install -g yarn
+
+# ---------------------------------------------------------------------------
+# Python extras: venv + Poetry
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV POETRY_HOME=/opt/poetry
+RUN curl -sSL https://install.python-poetry.org | python3 - \
+    && ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry
+
+# ---------------------------------------------------------------------------
+# Cache directories for dependency persistence across sessions
+# ---------------------------------------------------------------------------
+RUN mkdir -p \
+        /home/dev/.m2 \
+        /home/dev/.gradle \
+        /home/dev/.npm \
+        /home/dev/.yarn \
+        /home/dev/.cache/pypoetry \
+    && chown -R dev:dev \
+        /home/dev/.m2 \
+        /home/dev/.gradle \
+        /home/dev/.npm \
+        /home/dev/.yarn \
+        /home/dev/.cache
+
+USER dev
+WORKDIR /workspace

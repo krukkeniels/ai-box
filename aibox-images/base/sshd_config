@@ -1,0 +1,41 @@
+# =============================================================================
+# AI-Box SSH Server Configuration
+# =============================================================================
+# Hardened sshd_config for developer sandbox containers.
+# Key-only authentication, no root login, minimal attack surface.
+# =============================================================================
+
+# Network
+Port 22
+ListenAddress 0.0.0.0
+AddressFamily any
+
+# Authentication
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile /home/dev/.ssh/authorized_keys
+ChallengeResponseAuthentication no
+UsePAM no
+
+# Security
+X11Forwarding no
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+
+# Forwarding - allow TCP forwarding for IDE port forwarding (e.g. VS Code)
+AllowTcpForwarding yes
+GatewayPorts no
+
+# Keep-alive
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+# Logging
+SyslogFacility AUTH
+LogLevel INFO
+
+# Misc
+PrintMotd no
+AcceptEnv LANG LC_*

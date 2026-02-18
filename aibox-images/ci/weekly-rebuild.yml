@@ -1,0 +1,156 @@
+# =============================================================================
+# Weekly Image Rebuild
+# =============================================================================
+# Rebuilds all AI-Box images on a weekly schedule to incorporate OS security
+# patches. Pulls fresh Ubuntu 24.04 base layers (--no-cache for base).
+# Also supports manual trigger for emergency patches.
+# =============================================================================
+
+name: "Weekly Image Rebuild"
+
+on:
+  schedule:
+    # Monday 02:00 UTC
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      no_cache_all:
+        description: "Force --no-cache on all builds (not just base)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  HARBOR_URL: ${{ secrets.HARBOR_URL }}
+  HARBOR_USER: ${{ secrets.HARBOR_USER }}
+  HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+  COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+  REGISTRY: harbor.internal/aibox
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint Containerfiles
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint Containerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run hadolint
+        run: |
+          chmod +x scripts/lint.sh
+          ./scripts/lint.sh
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Rebuild base image with --no-cache (fresh Ubuntu layers)
+  # ---------------------------------------------------------------------------
+  rebuild-base:
+    name: "Rebuild base (no-cache)"
+    needs: [lint]
+    runs-on: ubuntu-latest
+    outputs:
+      date_tag: ${{ steps.tags.outputs.date_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Buildah
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq buildah
+
+      - name: Compute tags
+        id: tags
+        run: |
+          DATE_TAG="24.04-$(date +%Y%m%d)"
+          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "stable_tag=24.04" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Harbor
+        run: |
+          buildah login \
+            --username "${HARBOR_USER}" \
+            --password "${HARBOR_PASSWORD}" \
+            "${HARBOR_URL}"
+
+      - name: Build base image (no-cache)
+        run: |
+          chmod +x scripts/build.sh
+          ./scripts/build.sh base "${{ steps.tags.outputs.stable_tag }}" "${REGISTRY}" --no-cache
+        env:
+          DATE_TAG: ${{ steps.tags.outputs.date_tag }}
+
+      - name: Sign base image
+        run: |
+          chmod +x scripts/sign.sh
+          ./scripts/sign.sh "${REGISTRY}/base:${{ steps.tags.outputs.stable_tag }}"
+          ./scripts/sign.sh "${REGISTRY}/base:${{ steps.tags.outputs.date_tag }}"
+
+      - name: Scan base image
+        run: |
+          chmod +x scripts/scan-check.sh
+          ./scripts/scan-check.sh "${REGISTRY}/base:${{ steps.tags.outputs.stable_tag }}"
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Rebuild variant images
+  # ---------------------------------------------------------------------------
+  rebuild-variants:
+    name: "Rebuild ${{ matrix.variant }}"
+    needs: [lint, rebuild-base]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [java, node, full]
+        include:
+          - variant: java
+            stable_tag: "21-24.04"
+          - variant: node
+            stable_tag: "20-24.04"
+          - variant: full
+            stable_tag: "24.04"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Buildah
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq buildah
+
+      - name: Compute date tag
+        id: tags
+        run: |
+          DATE_TAG="${{ matrix.stable_tag }}-$(date +%Y%m%d)"
+          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Harbor
+        run: |
+          buildah login \
+            --username "${HARBOR_USER}" \
+            --password "${HARBOR_PASSWORD}" \
+            "${HARBOR_URL}"
+
+      - name: Build variant image
+        run: |
+          chmod +x scripts/build.sh
+          NO_CACHE_FLAG=""
+          if [ "${{ github.event.inputs.no_cache_all }}" = "true" ]; then
+            NO_CACHE_FLAG="--no-cache"
+          fi
+          ./scripts/build.sh "${{ matrix.variant }}" "${{ matrix.stable_tag }}" "${REGISTRY}" ${NO_CACHE_FLAG}
+        env:
+          DATE_TAG: ${{ steps.tags.outputs.date_tag }}
+
+      - name: Sign variant image
+        run: |
+          chmod +x scripts/sign.sh
+          ./scripts/sign.sh "${REGISTRY}/${{ matrix.variant }}:${{ matrix.stable_tag }}"
+          ./scripts/sign.sh "${REGISTRY}/${{ matrix.variant }}:${{ steps.tags.outputs.date_tag }}"
+
+      - name: Scan variant image
+        run: |
+          chmod +x scripts/scan-check.sh
+          ./scripts/scan-check.sh "${REGISTRY}/${{ matrix.variant }}:${{ matrix.stable_tag }}"

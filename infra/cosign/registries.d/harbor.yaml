@@ -1,0 +1,15 @@
+# Registry-specific sigstore configuration for Harbor.
+# Install to /etc/containers/registries.d/harbor.yaml
+#
+# This tells Podman/containers tooling to look for Cosign (sigstore)
+# signature attachments in the same registry when verifying images
+# pulled from harbor.internal.
+#
+# Without this, Podman does not know where to find the signatures
+# even if policy.json requires them.
+#
+# See: man containers-registries.d(5)
+
+docker:
+  harbor.internal:
+    use-sigstore-attachments: true

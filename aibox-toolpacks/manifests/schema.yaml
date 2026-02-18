@@ -1,0 +1,42 @@
+# AI-Box Tool Pack Manifest Schema
+# Tool packs extend the base image with language-specific or framework-specific tooling.
+
+apiVersion: aibox.io/v1
+kind: ToolPack
+metadata:
+  name: ""                  # e.g., "java", "node", "python"
+  version: ""               # e.g., "21", "20", "3.12"
+  description: ""
+  maintainer: ""
+  tags: []                  # e.g., ["language", "framework", "build-tool"]
+
+spec:
+  # Base image compatibility
+  compatible_images:
+    - "aibox-base:24.04"
+
+  # System packages to install
+  packages:
+    apt: []                 # apt packages
+    snap: []                # snap packages (if needed)
+
+  # Binary downloads
+  binaries: []
+    # - name: ""
+    #   url: ""
+    #   sha256: ""
+    #   install_path: ""
+
+  # Environment variables to set
+  environment: {}
+    # JAVA_HOME: "/usr/lib/jvm/java-21"
+
+  # Validation commands (run after install to verify)
+  verify: []
+    # - command: "java --version"
+    #   expect_exit_code: 0
+
+  # Build cache directories to persist
+  cache_dirs: []
+    # - "/home/dev/.m2/repository"
+    # - "/home/dev/.gradle/caches"

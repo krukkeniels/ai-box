@@ -1,0 +1,84 @@
+#include <tunables/global>
+
+profile aibox-sandbox flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # --- Deny sensitive paths (evaluated before allows) ---
+
+  # Deny host home directories (except /home/dev which is the sandbox user)
+  deny /home/** rw,
+  deny /root/** rw,
+
+  # Deny SSH key access everywhere
+  deny /**/.ssh/** rw,
+
+  # Deny container runtime socket access
+  deny /var/run/docker.sock rw,
+
+  # Deny dangerous proc/sys paths
+  deny /proc/*/mem rw,
+  deny /proc/kcore rw,
+  deny /proc/sysrq-trigger rw,
+  deny /sys/firmware/** rw,
+
+  # Deny shadow password files
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+
+  # Deny mount and ptrace at the capability level
+  deny mount,
+  deny ptrace,
+  deny capability sys_admin,
+  deny capability sys_ptrace,
+  deny capability net_admin,
+  deny capability net_raw,
+
+  # --- Allow workspace and writable areas ---
+
+  /workspace/** rw,
+  /home/dev/** rw,
+  /tmp/** rw,
+  /var/tmp/** rw,
+
+  # --- Allow reading configuration ---
+
+  /etc/aibox/** r,
+
+  # --- Allow reading standard system paths ---
+
+  / r,
+  /** r,
+  /dev/null rw,
+  /dev/zero r,
+  /dev/urandom r,
+  /dev/random r,
+  /dev/pts/* rw,
+  /dev/tty rw,
+  /dev/fd/** rw,
+  /proc/ r,
+  /proc/** r,
+  /sys/ r,
+  /sys/** r,
+
+  # --- Allow executing development tools ---
+
+  /usr/bin/** ix,
+  /usr/local/bin/** ix,
+  /usr/lib/** mr,
+  /usr/local/lib/** mr,
+  /opt/toolpacks/** ix,
+  /opt/toolpacks/** mr,
+
+  # --- Allow standard library and linker paths ---
+
+  /lib/** mr,
+  /lib64/** mr,
+  /usr/share/** r,
+  /etc/ld.so.cache r,
+  /etc/ld.so.preload r,
+  /etc/alternatives/** r,
+
+  # --- Allow network access (controlled by seccomp and host-level nftables) ---
+
+  network,
+}

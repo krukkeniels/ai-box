@@ -1,0 +1,75 @@
+# =============================================================================
+# AI-Box Base Image
+# =============================================================================
+# Ubuntu 24.04 LTS base image for all AI-Box developer sandboxes.
+# Provides a secure, non-root SSH-accessible environment with common dev tools.
+# Language-specific variants (java, node, full) extend this image.
+# =============================================================================
+
+FROM docker.io/library/ubuntu:24.04
+
+LABEL maintainer="platform-team@aibox.internal" \
+      version="24.04" \
+      description="AI-Box base developer sandbox image" \
+      org.opencontainers.image.source="https://git.internal/aibox/aibox-images" \
+      org.opencontainers.image.base.name="docker.io/library/ubuntu:24.04"
+
+# ---------------------------------------------------------------------------
+# OS packages
+# ---------------------------------------------------------------------------
+# Combined into a single RUN to minimize layers and clean up apt cache.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       git \
+       openssh-server \
+       jq \
+       vim \
+       nano \
+       bash \
+       zsh \
+       tmux \
+       build-essential \
+       python3 \
+       python3-pip \
+       curl \
+       wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Install yq (YAML processor)
+# ---------------------------------------------------------------------------
+ARG YQ_VERSION=v4.44.6
+ARG TARGETARCH=amd64
+RUN curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}" \
+        -o /usr/local/bin/yq \
+    && chmod +x /usr/local/bin/yq
+
+# ---------------------------------------------------------------------------
+# Create non-root user
+# ---------------------------------------------------------------------------
+RUN useradd -m -s /bin/bash -u 1000 dev \
+    && mkdir -p /home/dev/.ssh \
+    && chmod 700 /home/dev/.ssh \
+    && chown -R dev:dev /home/dev/.ssh
+
+# ---------------------------------------------------------------------------
+# SSH server setup
+# ---------------------------------------------------------------------------
+RUN mkdir -p /run/sshd
+COPY sshd_config /etc/ssh/sshd_config
+
+# ---------------------------------------------------------------------------
+# Placeholder directories for AI-Box components
+# ---------------------------------------------------------------------------
+# /etc/aibox   - runtime configuration and policy files
+# /opt/toolpacks - pre-approved tool bundles (populated in later phases)
+# /workspace   - default working directory for developer sessions
+RUN mkdir -p /etc/aibox /opt/toolpacks /workspace \
+    && chown dev:dev /workspace
+COPY policy-default.yaml /etc/aibox/policy.yaml
+
+WORKDIR /workspace
+USER dev
+
+EXPOSE 22

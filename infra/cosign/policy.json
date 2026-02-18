@@ -1,0 +1,48 @@
+{
+    "_comment": [
+        "Podman client-side image verification policy for AI-Box.",
+        "Install to /etc/containers/policy.json on developer machines.",
+        "",
+        "This policy enforces Cosign signature verification for all images",
+        "pulled from harbor.internal. Images from other registries and local",
+        "builds are allowed without signatures.",
+        "",
+        "See: man containers-policy.json(5)"
+    ],
+
+    "default": [
+        {
+            "_comment": "Allow unsigned images from registries not listed below.",
+            "type": "insecureAcceptAnything"
+        }
+    ],
+
+    "transports": {
+        "docker": {
+            "harbor.internal": [
+                {
+                    "_comment": [
+                        "Require Cosign (sigstore) signatures for all images from Harbor.",
+                        "The public key is distributed by 'aibox setup' and installed",
+                        "to /etc/aibox/cosign.pub. If verification fails, the pull is",
+                        "rejected with an error."
+                    ],
+                    "type": "sigstoreSigned",
+                    "keyPath": "/etc/aibox/cosign.pub"
+                }
+            ],
+            "localhost": [
+                {
+                    "_comment": "Allow unsigned images from localhost for local dev builds.",
+                    "type": "insecureAcceptAnything"
+                }
+            ],
+            "localhost:5000": [
+                {
+                    "_comment": "Allow unsigned images from local registry (dev/testing).",
+                    "type": "insecureAcceptAnything"
+                }
+            ]
+        }
+    }
+}

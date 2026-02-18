@@ -1,0 +1,20 @@
+# Build artifacts
+*.tar
+*.tar.gz
+*.img
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets - never commit
+cosign.key
+*.pem
+*.key
+!*.pub

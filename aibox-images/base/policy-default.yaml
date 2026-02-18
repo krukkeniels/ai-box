@@ -1,0 +1,33 @@
+# =============================================================================
+# AI-Box Default Policy
+# =============================================================================
+# Minimal placeholder policy shipped with the base image.
+# The actual org-level and project-level policies are layered on top at
+# container start time by the aibox-agent (added in Phase 2).
+# =============================================================================
+
+version: "1.0"
+kind: policy
+
+metadata:
+  name: default
+  description: Base image default policy placeholder
+
+# Network access defaults - overridden by org/project policies
+network:
+  outbound: deny
+  allowed_hosts: []
+
+# Filesystem defaults
+filesystem:
+  read_only_paths:
+    - /etc/aibox
+  writable_paths:
+    - /workspace
+    - /tmp
+
+# Tool execution defaults
+tools:
+  allow_install: false
+  approved_sources:
+    - /opt/toolpacks

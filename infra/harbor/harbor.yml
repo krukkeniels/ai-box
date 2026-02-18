@@ -1,0 +1,129 @@
+# Harbor Configuration File for AI-Box Registry
+#
+# This file is consumed by Harbor's install.sh during deployment.
+# See: https://goharbor.io/docs/2.11.0/install-config/configure-yml-file/
+#
+# After modifying this file, run: ./install.sh --with-trivy
+# To apply changes to a running instance: docker-compose down -v && ./install.sh --with-trivy
+
+# ---------- Hostname ----------
+# The external-facing hostname or IP used to access Harbor.
+# Do NOT use localhost or 127.0.0.1.
+hostname: harbor.internal
+
+# ---------- HTTP / HTTPS ----------
+http:
+  port: 80
+
+https:
+  port: 443
+  certificate: /etc/harbor/tls/cert.pem
+  private_key: /etc/harbor/tls/key.pem
+
+# Enable internal TLS between Harbor components.
+internal_tls:
+  enabled: true
+  dir: /etc/harbor/tls/internal
+
+# ---------- External URL ----------
+# Used in Docker/Podman login instructions and API responses.
+external_url: https://harbor.internal
+
+# ---------- Admin Credentials ----------
+harbor_admin_password: CHANGE_ME
+
+# ---------- Database (Internal PostgreSQL) ----------
+database:
+  password: CHANGE_ME_DB_PASSWORD
+  max_idle_conns: 100
+  max_open_conns: 900
+  conn_max_lifetime: 5m
+  conn_max_idle_time: 0
+
+# ---------- Data Volume ----------
+data_volume: /data/harbor
+
+# ---------- Storage Backend ----------
+# Default: local filesystem.
+# For production / air-gapped replication, switch to S3-compatible storage (MinIO).
+storage_service:
+  filesystem:
+    maxthreads: 100
+
+  # --- S3 / MinIO alternative (uncomment to enable) ---
+  # s3:
+  #   accesskey: MINIO_ACCESS_KEY
+  #   secretkey: MINIO_SECRET_KEY
+  #   region: us-east-1
+  #   regionendpoint: https://minio.internal:9000
+  #   bucket: harbor-registry
+  #   secure: true
+  #   rootdirectory: /harbor-images
+  #   # For self-signed MinIO certs:
+  #   # skipverify: true
+
+  # Redirect image layer downloads directly to backend storage.
+  # Set to true when using S3/MinIO for better performance.
+  redirect:
+    disabled: true
+
+# ---------- Trivy Scanner ----------
+trivy:
+  # Skip update of the Trivy vulnerability DB on first scan.
+  # Set to true for air-gapped environments and pre-load the DB manually.
+  ignore_unfixed: false
+  security_check: vuln
+  insecure: false
+  # GitHub token for downloading the Trivy DB (optional, avoids rate limits).
+  # github_token: GITHUB_TOKEN
+
+# ---------- Job Service ----------
+jobservice:
+  max_job_workers: 10
+  job_loggers:
+    - STD_OUTPUT
+    - FILE
+  logger_sweeper_duration: 1 # days
+
+# ---------- Notification ----------
+notification:
+  webhook_job_max_retry: 3
+  webhook_job_http_client_timeout: 3 # seconds
+
+# ---------- Log ----------
+log:
+  level: info
+  local:
+    rotate_count: 50
+    rotate_size: 200M
+    location: /var/log/harbor
+
+# ---------- Proxy ----------
+# Uncomment if Harbor needs an outbound proxy to reach Docker Hub / Trivy DB.
+# proxy:
+#   http_proxy: http://proxy.internal:3128
+#   https_proxy: http://proxy.internal:3128
+#   no_proxy: 127.0.0.1,localhost,.internal
+#   components:
+#     - core
+#     - jobservice
+#     - trivy
+
+# ---------- Cache ----------
+cache:
+  enabled: true
+  expire_hours: 24
+
+# ---------- Metrics ----------
+# Expose Prometheus metrics on port 9090 for monitoring.
+metric:
+  enabled: true
+  port: 9090
+  path: /metrics
+
+# ---------- Upload Purging ----------
+upload_purging:
+  enabled: true
+  age: 168h   # 7 days
+  interval: 24h
+  dryrun: false
