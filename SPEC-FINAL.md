@@ -2,10 +2,12 @@
 
 *A secure, tool-agnostic development sandbox enabling agentic AI software engineering at scale.*
 
-**Version**: 1.0
-**Date**: 2026-02-18
+**Version**: 1.1
+**Date**: 2026-02-19
 **Status**: Final Draft
 **Audience**: Platform engineering, security, engineering leadership
+
+> **Changelog v1.1 (2026-02-19)**: Polyglot stack amendments -- added .NET, PowerShell Core, and AngularJS 1.x tool packs; added `aibox-dotnet` image variant; added polyglot resource profile; expanded gVisor compatibility notes for .NET CLR, Bazel sandboxing, and PowerShell Core; updated WSL2 `.wslconfig` recommendations for polyglot workloads; added NuGet proxy validation note. See PLAN-REALIGNMENT.md for full gap analysis (G1-G9).
 
 ---
 
@@ -324,10 +326,14 @@ For highest-classification workloads, Kata Containers (full VM isolation) is ava
 Recommended `.wslconfig`:
 ```ini
 [wsl2]
-memory=16GB
+memory=16GB        # Standard workloads (single stack + AI agent)
+# memory=24GB      # Polyglot workloads (.NET + JVM + Node + Bazel + AI agent)
 processors=8
 swap=4GB
+# swap=8GB         # For polyglot workloads
 ```
+
+> **Note**: Polyglot monolith workloads (.NET + JVM + Node + Bazel + AI agent) may require 24 GB memory and 8 GB swap. See Section 18.2 for resource profiles.
 
 ---
 
@@ -451,6 +457,8 @@ Container -> Squid proxy -> Nexus/Artifactory -> Upstream registries
 
 Supported registries: npm, Maven Central, Gradle Plugin Portal, PyPI, NuGet, Go modules, Cargo (crates.io).
 
+> **NuGet proxy validation**: NuGet has specific proxy/feed configuration requirements. The Nexus NuGet mirror must be validated with `dotnet restore` through the proxy to ensure feed discovery, authentication, and package resolution work correctly. Add `nuget.config` to the `.NET` tool pack with the Nexus mirror URL pre-configured.
+
 ---
 
 ## 9. Container Isolation
@@ -466,6 +474,13 @@ gVisor provides a user-space kernel that intercepts syscalls. Even if an attacke
 | Kata Containers | Full VM | Higher (VM boot, ~256MB/sandbox) | Good |
 
 gVisor is the default. Kata Containers available for highest-classification workloads.
+
+**Polyglot compatibility notes**: Polyglot stacks expand the gVisor compatibility surface beyond typical JVM/Node workloads:
+- **.NET CLR**: Uses memory-mapped files, thread pool, and JIT patterns that differ from JVM. Requires dedicated compatibility validation.
+- **Bazel sandboxing**: Bazel creates its own sandboxes -- sandbox-within-gVisor-sandbox is untested and high-risk. May require `--spawn_strategy=local` fallback.
+- **PowerShell Core**: Uses .NET CLR internally, adds additional syscall surface beyond bash/zsh.
+
+If any component fails under gVisor, use `runc` as a fallback with compensating controls (seccomp + AppArmor + rootless Podman).
 
 ### 9.2 Seccomp Profile
 
@@ -830,7 +845,7 @@ All debugging works natively because everything runs inside the container:
 
 ### 13.5 Shell and Dotfiles
 
-- `bash` and `zsh` available in base image.
+- `bash`, `zsh`, and PowerShell Core (`pwsh`) available in base image.
 - `tmux` available for session persistence.
 - Dotfiles sync mechanism: `aibox` CLI can clone a dotfiles repo into the container home volume.
 - Shell history persists in the named home volume.
@@ -971,6 +986,9 @@ tags: ["language", "jvm"]
 | `bazel@7` | Bazel 7.x | +200MB |
 | `scala@3` | Scala 3.x, sbt, Metals LSP | +300MB |
 | `angular@18` | Angular CLI 18 | +50MB (requires node) |
+| `dotnet@8` | .NET SDK 8, NuGet CLI, MSBuild | +500MB |
+| `powershell@7` | PowerShell Core 7.x | +150MB |
+| `angularjs@1` | AngularJS 1.x legacy build tools (Node 18, Bower, Grunt/Gulp) | +200MB (requires node@18) |
 | `ai-tools` | Claude Code CLI, Codex CLI | +100MB |
 
 ### 15.4 Governance
@@ -1026,6 +1044,7 @@ Each MCP pack declares its required network endpoints and filesystem permissions
 aibox-base:24.04          ~500MB   OS + essential tools + aibox-agent
 aibox-java:21-24.04       ~900MB   base + JDK 21 + Maven + Gradle
 aibox-node:20-24.04       ~650MB   base + Node 20 + npm/yarn
+aibox-dotnet:8-24.04      ~1.0GB   base + .NET SDK 8 + NuGet
 aibox-full:24.04          ~1.5GB   base + Java + Node + Python + Bazel
 ```
 
@@ -1034,7 +1053,7 @@ aibox-full:24.04          ~1.5GB   base + Java + Node + Python + Bazel
 ```
 # OS layer
 Ubuntu 24.04 LTS (minimal), ca-certificates, git, ssh-client,
-jq, yq, vim, nano, bash, zsh, tmux, build-essential, python3,
+jq, yq, vim, nano, bash, zsh, powershell (pwsh), tmux, build-essential, python3,
 curl (disabled by network policy)
 
 # AI-Box layer
@@ -1099,6 +1118,7 @@ Process: Automated CI pipeline rebuilds images weekly. New images pushed with da
 | Backend (Java/Kotlin + IntelliJ) | 4 cores | 8-12 GB | 40 GB |
 | Full-stack + AI agent | 4-6 cores | 10-16 GB | 50 GB |
 | Monorepo (Bazel/Nx) | 6-8 cores | 12-16 GB | 60 GB |
+| Polyglot Monolith (.NET + JVM + Node + Bazel + AI agent) | 8 cores | 16-24 GB | 80 GB |
 
 ### 18.3 Developer Machine Requirements
 
@@ -1111,7 +1131,7 @@ Process: Automated CI pipeline rebuilds images weekly. New images pushed with da
 
 ### 18.4 Shell and Dotfiles
 
-- Bash and Zsh available.
+- Bash, Zsh, and PowerShell Core (pwsh) available.
 - Tmux for session persistence.
 - Dotfiles sync: `aibox` clones a configured dotfiles repo into the persistent home volume.
 - Shell history persists across sessions.
@@ -1494,4 +1514,4 @@ For fully air-gapped classified environments:
 
 ---
 
-*End of AI-Box Final Specification v1.0*
+*End of AI-Box Final Specification v1.1*

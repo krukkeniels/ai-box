@@ -1,0 +1,48 @@
+# =============================================================================
+# AI-Box .NET Variant Image
+# =============================================================================
+# Extends the base image with .NET SDK 8, NuGet CLI, and MSBuild for
+# C#/.NET development sandboxes.
+# =============================================================================
+
+FROM harbor.internal/aibox/base:24.04
+
+LABEL maintainer="platform-team@aibox.internal" \
+      version="8-24.04" \
+      description="AI-Box .NET developer sandbox (.NET SDK 8 + NuGet + MSBuild)" \
+      org.opencontainers.image.source="https://git.internal/aibox/aibox-images"
+
+USER root
+
+# ---------------------------------------------------------------------------
+# .NET SDK 8 (from Microsoft APT repository)
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       gpg \
+       apt-transport-https \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+       | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+       > /etc/apt/sources.list.d/microsoft.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       dotnet-sdk-8.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV PATH="${DOTNET_ROOT}:${DOTNET_ROOT}/tools:${PATH}"
+
+# ---------------------------------------------------------------------------
+# NuGet configuration (pre-configured to use Nexus mirror)
+# ---------------------------------------------------------------------------
+COPY nuget.config /home/dev/.nuget/NuGet/NuGet.Config
+
+# ---------------------------------------------------------------------------
+# Cache directories for dependency persistence across sessions
+# ---------------------------------------------------------------------------
+RUN mkdir -p /home/dev/.nuget/packages /home/dev/.dotnet/tools \
+    && chown -R dev:dev /home/dev/.nuget /home/dev/.dotnet
+
+USER dev
+WORKDIR /workspace

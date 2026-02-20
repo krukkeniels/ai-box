@@ -17,7 +17,7 @@ Network controls are the primary exfiltration prevention mechanism and the core 
 3. **CoreDNS configuration** with allowlist-only resolution, NXDOMAIN for all non-allowlisted domains, query logging, and Prometheus metrics.
 4. **DNS tunneling mitigations**: block TXT/NULL/CNAME record types, rate-limit queries per source, monitor for high subdomain entropy.
 5. **LLM API sidecar proxy** (`aibox-llm-proxy`): credential injection from Vault-mounted secret, full request/response payload logging, rate limiting (60 req/min, 100K tokens/min), payload size limits, sandbox identity headers.
-6. **Package manager proxy configuration**: npm, Maven, pip, NuGet, Go modules, and Cargo routed through Nexus via Squid.
+6. **Package manager proxy configuration**: npm, Maven, pip, NuGet, Go modules, Cargo, and PowerShell Gallery (PSGallery) routed through Nexus via Squid.
 7. **`aibox network test` CLI command** for developer-facing connectivity verification.
 8. **Anti-bypass protections**: block DNS-over-HTTPS (DoH) to known resolver IPs, block DNS-over-TLS (DoT) on port 853, block direct IP egress.
 9. **Integration with `aibox setup`**: all host-level components (nftables, Squid, CoreDNS) provisioned and verified automatically.
@@ -165,12 +165,13 @@ Network controls are the primary exfiltration prevention mechanism and the core 
   - npm: `.npmrc` with `registry=https://nexus.internal/repository/npm-proxy/`
   - Maven: `settings.xml` with Nexus mirror for Maven Central and Gradle Plugin Portal.
   - pip: `pip.conf` with `index-url=https://nexus.internal/repository/pypi-proxy/simple/`
-  - NuGet: `NuGet.Config` with Nexus source.
+  - NuGet: `NuGet.Config` with Nexus source. **Note**: `dotnet restore` has specific proxy/feed configuration requirements -- validate feed discovery, authentication, and package resolution through the Nexus proxy.
   - Go modules: `GOPROXY=https://nexus.internal/repository/go-proxy/`
   - Cargo: `.cargo/config.toml` with Nexus registry.
+  - PowerShell Gallery (PSGallery): Configure `Register-PSRepository` with Nexus mirror if PowerShell modules need to be installed inside the sandbox.
 - Bake these configurations into the base image (`/etc/aibox/package-manager-configs/`).
 - Ensure `aibox setup` verifies that Nexus mirrors are accessible through the Squid proxy.
-- Verify that `npm install`, `gradle build`, `pip install`, etc. all succeed through the proxy chain.
+- Verify that `npm install`, `gradle build`, `pip install`, `dotnet restore`, etc. all succeed through the proxy chain.
 - Document how teams can request additional registry mirrors (e.g., a team-specific internal registry).
 
 **Key config decisions**:
@@ -289,17 +290,11 @@ Network controls are the primary exfiltration prevention mechanism and the core 
 
 **Q2**: Should we run Squid and CoreDNS as host-level systemd services or as Podman containers on the host network? Containers are easier to manage/update but add a dependency on Podman for host-level security infrastructure. -- *Who should answer*: Platform engineering + security team
 
-**Q3**: For TLS 1.3 with Encrypted Client Hello (ECH), SNI is encrypted and Squid cannot inspect it. Is ECH likely to be enabled by internal services (`*.internal`)? If so, do we need compensating controls? -- *Who should answer*: Security team + network engineering
+**Q3**: Should the LLM payload logs include full response bodies (which can be very large for long completions), or should we log hashes/summaries above a size threshold? Full logging provides maximum forensic value but consumes significant storage. -- *Who should answer*: Security team + compliance
 
-**Q4**: What is the maximum acceptable latency overhead for the LLM sidecar proxy? The spec says <50ms. Is this per-request latency or measured differently? -- *Who should answer*: Product owner / developer experience lead
+**Q4**: How do we handle the case where a developer needs temporary access to a domain not on the allowlist (e.g., a new internal API)? What is the self-service request and approval flow? -- *Who should answer*: Security team + platform engineering
 
-**Q5**: Should the LLM payload logs include full response bodies (which can be very large for long completions), or should we log hashes/summaries above a size threshold? Full logging provides maximum forensic value but consumes significant storage. -- *Who should answer*: Security team + compliance
-
-**Q6**: How do we handle the case where a developer needs temporary access to a domain not on the allowlist (e.g., a new internal API)? What is the self-service request and approval flow? -- *Who should answer*: Security team + platform engineering
-
-**Q7**: For air-gapped deployments, the LLM gateway is internal (self-hosted models). Does the sidecar proxy architecture change, or does it remain the same with a different upstream URL? -- *Who should answer*: Platform engineering
-
-**Q8**: Should QUIC (HTTP/3, UDP 443) be explicitly blocked in nftables? Squid does not support QUIC proxying, so QUIC traffic would bypass the proxy. -- *Who should answer*: Security team
+**Q5**: Should QUIC (HTTP/3, UDP 443) be explicitly blocked in nftables? Squid does not support QUIC proxying, so QUIC traffic would bypass the proxy. -- *Who should answer*: Security team
 
 ---
 
@@ -340,7 +335,7 @@ Network controls are the primary exfiltration prevention mechanism and the core 
 4. **LLM API functional**: Claude Code / Codex CLI can make API calls via the sidecar proxy. The agent process cannot read the API key from the environment or filesystem.
 5. **Payload logging works**: LLM API request and response bodies are captured in `/var/log/aibox/llm-payloads.jsonl` with correct metadata.
 6. **Rate limiting works**: Exceeding 60 requests/minute to the LLM API returns HTTP 429.
-7. **Package managers work**: `npm install`, `gradle build` (with dependencies), and `pip install` succeed through the Nexus mirror.
+7. **Package managers work**: `npm install`, `gradle build` (with dependencies), `pip install`, and `dotnet restore` succeed through the Nexus mirror. NuGet feed discovery and package resolution verified through proxy.
 8. **nftables persistent**: Rules survive container restart and host reboot. Rules cannot be modified from inside the container.
 9. **Bypass test suite passes**: All bypass vectors tested (direct HTTPS, direct DNS, DoH, DoT, ICMP, raw sockets, env var unsetting) are blocked.
 10. **`aibox network test` reports all-green**: Proxy reachable, DNS resolver responding, allowlisted domains accessible, blocked domains inaccessible.

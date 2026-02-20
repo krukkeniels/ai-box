@@ -342,19 +342,13 @@ Phase 5 can begin as soon as Phase 2 completes (network/proxy/DNS logs are avail
 
 1. **Is audit a hard gate for rollout?** For classified environments, Phase 5 may need to complete before Phase 6 pilot begins. For standard environments, basic logging may suffice for pilot, with full audit completing in parallel. Need decision from security/compliance stakeholders.
 
-2. **LLM payload logging: full content or hashes?** Logging full LLM request/response payloads provides the best forensic capability but creates large volumes of potentially sensitive data in the log store. Hashing reduces volume but limits investigation. Can this be configured per classification level?
+2. **LLM payload logging: full content or hashes?** Logging full LLM request/response payloads provides the best forensic capability but creates large volumes of potentially sensitive data in the log store. Can this be configured per classification level (full content for classified, hashes for standard)?
 
-3. **Session recording opt-in or opt-out?** The spec says "optional for classified environments." Should this be a per-environment policy setting, a per-team setting, or a per-developer opt-in? Legal/HR review needed for jurisdictions with employee monitoring regulations.
+3. **Session recording opt-in or opt-out?** The spec says "optional for classified environments." Should this be a per-environment policy setting or a per-team setting? Legal/HR review needed for jurisdictions with employee monitoring regulations.
 
-4. **Log storage sizing and budget.** Estimated ~1-5 GB/day compressed for 200 developers across all event categories. With 1-2 year retention, this is ~0.5-3.5 TB. With session recordings, potentially 2-5x more. Need budget approval for storage infrastructure.
+4. **Log storage sizing and budget.** Estimated ~1-5 GB/day compressed for 200 developers. With 1-2 year retention, this is ~0.5-3.5 TB. With session recordings, potentially 2-5x more. Need budget approval for storage infrastructure.
 
-5. **Who owns the SIEM rules?** AI-Box platform team writes the initial rules, but ongoing tuning and response is a security operations function. Need to agree on ownership handoff and SLA for rule maintenance.
-
-6. **Falco on Windows/WSL2: is it viable?** Falco's eBPF driver may not work in all WSL2 kernel versions. If it doesn't, the options are: (a) Falco on native Linux only, (b) host-level auditd as a substitute on Windows, (c) defer Falco to Phase 2 centralized deployment where it runs on Kubernetes nodes. Research must answer this before implementation begins.
-
-7. **Hash chain verification frequency.** Should hash chain integrity be verified continuously (expensive), daily (reasonable), or on-demand (risk of late detection)? What is the SLA for tamper detection?
-
-8. **Existing compliance framework mapping.** Which specific compliance frameworks must the audit system satisfy (NIST 800-53, CMMC, ISO 27001, internal policy)? Controls mapping should drive event category prioritization.
+5. **Falco on Windows/WSL2: is it viable?** Falco's eBPF driver may not work in all WSL2 kernel versions. If it doesn't, the options are: (a) Falco on native Linux only, (b) host-level auditd as a substitute on Windows, (c) defer Falco to centralized (K8s) mode. Research must answer this before implementation begins.
 
 ---
 
@@ -444,7 +438,7 @@ All of the following must be verified before Phase 5 is considered complete:
 | SIEM Integration | 0.5-1 engineer-week | Target SIEM platform expertise, detection engineering |
 | Session Recording | 0.5 engineer-week | Terminal I/O, encryption, storage |
 | Dashboards & Alerting | 0.5-1 engineer-week | Grafana, data visualization, alert routing |
-| **Total** | **4-6 engineer-weeks** | **2 engineers, ~3 calendar weeks** |
+| **Total** | **4-5 engineer-weeks** | **2 engineers, ~3 calendar weeks** |
 
 **Team composition**: 2 engineers -- one focused on the data pipeline (Work Streams 1, 2, 4) and one focused on security monitoring (Work Streams 3, 5, 6). Both collaborate on schema design and testing.
 

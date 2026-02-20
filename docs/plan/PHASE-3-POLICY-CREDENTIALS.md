@@ -54,7 +54,7 @@ These two systems reinforce each other: the policy engine decides *what* a workl
 - Hot-reload support so policy updates can be applied without container restart (pull on interval or webhook trigger).
 
 **Key decisions**:
-- **Integration mode**: OPA can run as an embedded Go library (lowest latency, tightest coupling), a sidecar process (separate process, HTTP API), or an external service (shared across containers). Recommendation: **embedded library** if `aibox-agent` is written in Go, otherwise **sidecar process** communicating over a Unix domain socket for minimal latency. The external-service pattern adds a network dependency that degrades the local-first model.
+- **Integration mode**: OPA runs as an **embedded Go library** (`github.com/open-policy-agent/opa/rego`) since `aibox-agent` is written in Go. This provides sub-millisecond evaluation and avoids inter-process overhead. No sidecar or external service needed.
 - **Bundle distribution**: Rego bundles are stored in the `aibox-policies` Git repository, signed with Cosign, and pulled at container start. The `aibox-agent` verifies signatures before loading. Updates can be pulled periodically (every 5 minutes) or on-demand via `aibox policy update`.
 - **Decision log format**: Structured JSON, one line per decision, compatible with Vector/Fluentd for shipping. Include: timestamp, policy version hash, input hash, decision (allow/deny), rule that fired, human-readable reason.
 
@@ -195,8 +195,7 @@ These two systems reinforce each other: the policy engine decides *what* a workl
 
 ## Research Required
 
-### OPA Integration Patterns
-- **Embedded Go library vs. sidecar process vs. external service**: Benchmark latency for each pattern. Embedded library (using `github.com/open-policy-agent/opa/rego`) offers sub-millisecond evaluation but couples the agent to Go. Sidecar over Unix socket adds ~1-2ms per decision. External HTTP service adds network overhead incompatible with local-first.
+### OPA Bundle Signing and Decision Log Performance
 - **Bundle signing and verification**: OPA supports signed bundles natively. Evaluate whether OPA's built-in bundle signing (using JWS) is sufficient or whether Cosign signatures on the Git repository provide a better trust chain.
 - **Decision log performance**: OPA's built-in decision logging can impact performance at high volumes. Evaluate async logging (buffered writes) vs. synchronous logging. Target: < 1ms overhead per decision.
 
@@ -220,25 +219,17 @@ These two systems reinforce each other: the policy engine decides *what* a workl
 
 ## Open Questions
 
-**Q1**: Should OPA run as an embedded library, sidecar process, or external service? -- *Who should answer*: Platform engineering team (depends on `aibox-agent` implementation language and performance requirements)
+**Q1**: What is the Git server platform (GitHub Enterprise, GitLab, Bitbucket) and what token generation APIs does it expose? -- *Who should answer*: Infrastructure/DevOps team
 
-**Q2**: What is the Git server platform (GitHub Enterprise, GitLab, Bitbucket) and what token generation APIs does it expose? -- *Who should answer*: Infrastructure/DevOps team
+**Q2**: Is an existing Vault cluster available, or does one need to be deployed as part of this phase? -- *Who should answer*: Infrastructure/security team
 
-**Q3**: Is an existing Vault cluster available, or does one need to be deployed as part of this phase? -- *Who should answer*: Infrastructure/security team
+**Q3**: What SPIFFE trust domain should be used, and should it be shared with other organizational workloads or dedicated to AI-Box? -- *Who should answer*: Security architecture team
 
-**Q4**: What SPIFFE trust domain should be used, and should it be shared with other organizational workloads or dedicated to AI-Box? -- *Who should answer*: Security architecture team
+**Q4**: For the `review-required` tool class, should the default behavior be async (log and proceed) or sync (block until approved)? -- *Who should answer*: Security team + developer experience team (jointly)
 
-**Q5**: For the `review-required` tool class, should the default behavior be async (log and proceed) or sync (block until approved)? -- *Who should answer*: Security team + developer experience team (jointly)
+**Q5**: What is the acceptable credential TTL range? Shorter TTLs (1-2 hours) increase Vault load and break graceful degradation; longer TTLs (8-12 hours) increase exposure window. -- *Who should answer*: Security team
 
-**Q6**: How should policy updates be distributed to running containers? Pull-based (poll every N minutes) vs. push-based (webhook/signal)? -- *Who should answer*: Platform engineering team
-
-**Q7**: What is the acceptable credential TTL range? Shorter TTLs (1-2 hours) increase Vault load and break graceful degradation; longer TTLs (8-12 hours) increase exposure window. -- *Who should answer*: Security team
-
-**Q8**: Should the simplified fallback (Work Stream 7) be built first as a quick-start path, or should Vault be the only supported path from day one? -- *Who should answer*: Project lead + security team (trade-off between speed-to-value and security posture)
-
-**Q9**: How granular should Git token scoping be? Per-organization, per-repository, or per-branch? -- *Who should answer*: Security team + Git server administrators
-
-**Q10**: Should the org baseline policy be embedded in the container image (immutable per image version) or fetched at startup (more flexible but adds a dependency)? -- *Who should answer*: Security team + platform engineering team
+**Q6**: How granular should Git token scoping be? Per-organization, per-repository, or per-branch? -- *Who should answer*: Security team + Git server administrators
 
 ---
 
@@ -323,6 +314,6 @@ These two systems reinforce each other: the policy engine decides *what* a workl
 - **Track A (Policy)**: Work Streams 1, 2, 3 -- can be done by one engineer.
 - **Track B (Credentials)**: Work Streams 4, 5, 6, 7 -- can be done by one or two engineers.
 
-Track B should start with Work Stream 7 (simplified fallback) to unblock other work, then proceed to Work Streams 4, 5, 6 for the full Vault/SPIRE integration. Track A and Track B converge when the tool permission model (Work Stream 3) needs credential-gated decisions.
+Track B starts with Work Stream 7 (simplified fallback) first -- this provides a working credential system immediately and unblocks other work. Then proceed to Work Streams 4, 5, 6 for the full Vault/SPIRE integration. Track A and Track B converge when the tool permission model (Work Stream 3) needs credential-gated decisions.
 
 A third engineer is valuable for writing the Rego test suite, security testing, and documentation in parallel.

@@ -83,13 +83,25 @@ func (f SecurityFlags) Validate() error {
 // ValidateArgs inspects a list of container runtime arguments and verifies
 // that all mandatory security flags are present. This is used as a final
 // gate before exec to ensure nothing was accidentally dropped.
+//
+// When gVisor is expected (expectGVisor=true), it also verifies --runtime=runsc.
+// When AppArmor is available (expectAppArmor=true), it verifies the apparmor
+// security-opt is present.
 func ValidateArgs(args []string) error {
+	return ValidateArgsWithExpectations(args, false, false)
+}
+
+// ValidateArgsWithExpectations is like ValidateArgs but also checks for
+// gVisor runtime and AppArmor flags when those features are expected.
+func ValidateArgsWithExpectations(args []string, expectGVisor, expectAppArmor bool) error {
 	var (
 		hasCapDropAll      bool
 		hasNoNewPrivileges bool
 		hasReadOnly        bool
 		hasUser            bool
 		hasSeccomp         bool
+		hasGVisor          bool
+		hasAppArmor        bool
 	)
 
 	for _, arg := range args {
@@ -110,6 +122,10 @@ func ValidateArgs(args []string) error {
 			if val != "" && val != "unconfined" {
 				hasSeccomp = true
 			}
+		case arg == "--runtime=runsc":
+			hasGVisor = true
+		case strings.HasPrefix(arg, "--security-opt=apparmor="):
+			hasAppArmor = true
 		}
 	}
 
@@ -128,6 +144,12 @@ func ValidateArgs(args []string) error {
 	}
 	if !hasSeccomp {
 		missing = append(missing, "--security-opt=seccomp=<profile>")
+	}
+	if expectGVisor && !hasGVisor {
+		missing = append(missing, "--runtime=runsc (gVisor expected)")
+	}
+	if expectAppArmor && !hasAppArmor {
+		missing = append(missing, "--security-opt=apparmor=<profile> (AppArmor expected)")
 	}
 
 	if len(missing) > 0 {

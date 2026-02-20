@@ -234,3 +234,71 @@ func TestValidateArgs_EmptySlice(t *testing.T) {
 		t.Errorf("error should say 'refusing to launch', got: %v", err)
 	}
 }
+
+// validBaseArgs returns a minimal set of args that satisfy all base security checks.
+func validBaseArgs() []string {
+	return []string{
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges:true",
+		"--read-only",
+		"--user=1000:1000",
+		"--security-opt=seccomp=/etc/aibox/seccomp.json",
+	}
+}
+
+func TestValidateArgsWithExpectations_GVisorExpected(t *testing.T) {
+	// Base args without --runtime=runsc should fail when gVisor is expected.
+	args := validBaseArgs()
+	err := ValidateArgsWithExpectations(args, true, false)
+	if err == nil {
+		t.Fatal("should fail when gVisor is expected but --runtime=runsc is missing")
+	}
+	if !strings.Contains(err.Error(), "--runtime=runsc") {
+		t.Errorf("error should mention --runtime=runsc, got: %v", err)
+	}
+}
+
+func TestValidateArgsWithExpectations_AppArmorExpected(t *testing.T) {
+	// Base args without apparmor should fail when AppArmor is expected.
+	args := validBaseArgs()
+	err := ValidateArgsWithExpectations(args, false, true)
+	if err == nil {
+		t.Fatal("should fail when AppArmor is expected but apparmor flag is missing")
+	}
+	if !strings.Contains(err.Error(), "apparmor") {
+		t.Errorf("error should mention apparmor, got: %v", err)
+	}
+}
+
+func TestValidateArgsWithExpectations_AllPresent(t *testing.T) {
+	args := append(validBaseArgs(),
+		"--runtime=runsc",
+		"--security-opt=apparmor=aibox-sandbox",
+	)
+	if err := ValidateArgsWithExpectations(args, true, true); err != nil {
+		t.Errorf("should pass when all expected flags are present: %v", err)
+	}
+}
+
+func TestValidateArgsWithExpectations_BothExpectedBothMissing(t *testing.T) {
+	args := validBaseArgs()
+	err := ValidateArgsWithExpectations(args, true, true)
+	if err == nil {
+		t.Fatal("should fail when both gVisor and AppArmor are expected but missing")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "--runtime=runsc") {
+		t.Error("error should mention --runtime=runsc")
+	}
+	if !strings.Contains(errStr, "apparmor") {
+		t.Error("error should mention apparmor")
+	}
+}
+
+func TestValidateArgsWithExpectations_NeitherExpected(t *testing.T) {
+	// When neither is expected, base args alone should pass.
+	args := validBaseArgs()
+	if err := ValidateArgsWithExpectations(args, false, false); err != nil {
+		t.Errorf("should pass when neither gVisor nor AppArmor is expected: %v", err)
+	}
+}

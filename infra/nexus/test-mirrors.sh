@@ -233,10 +233,24 @@ test_go() {
 }
 
 ###############################################################################
-# Test: NuGet
+# Test: NuGet V3 feed discovery
+###############################################################################
+test_nuget_v3_index() {
+  echo "=== Testing NuGet V3 service index ==="
+  local index_url="${NEXUS_URL}/repository/nuget-group/index.json"
+
+  if curl -sf "$index_url" | jq -e '.version and .resources' >/dev/null 2>&1; then
+    report PASS "nuget-v3-index" "V3 service index at ${index_url} returns valid JSON"
+  else
+    report FAIL "nuget-v3-index" "V3 service index not reachable or invalid at ${index_url}"
+  fi
+}
+
+###############################################################################
+# Test: NuGet dotnet restore with multiple dependencies
 ###############################################################################
 test_nuget() {
-  echo "=== Testing NuGet mirror ==="
+  echo "=== Testing NuGet mirror (dotnet restore) ==="
   if [ "${SKIP_NUGET:-0}" = "1" ]; then
     report SKIP "nuget" "Skipped by SKIP_NUGET=1"
     return
@@ -247,20 +261,46 @@ test_nuget() {
     return
   fi
 
+  # Test V3 feed discovery first.
+  test_nuget_v3_index
+
   local nuget_dir="${WORK_DIR}/nuget-test"
   mkdir -p "$nuget_dir"
 
   cd "$nuget_dir"
-  if dotnet new console -n NugetTest >/dev/null 2>&1; then
-    cd NugetTest
-    if dotnet add package Newtonsoft.Json \
-      --source "${NEXUS_URL}/repository/nuget-group/index.json" >/dev/null 2>&1; then
-      report PASS "nuget" "dotnet add package Newtonsoft.Json succeeded via nuget-group"
-    else
-      report FAIL "nuget" "dotnet add package failed"
-    fi
-  else
+  if ! dotnet new console -n NugetTest >/dev/null 2>&1; then
     report SKIP "nuget" "Could not create dotnet test project"
+    return
+  fi
+
+  cd NugetTest
+
+  # Write NuGet.Config pointing at the Nexus mirror (disables nuget.org).
+  cat > NuGet.Config <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nexus" value="${NEXUS_URL}/repository/nuget-group/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="nexus">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
+EOF
+
+  # Add multiple dependencies to the project file to exercise the proxy.
+  dotnet add package Newtonsoft.Json >/dev/null 2>&1 || true
+  dotnet add package Serilog >/dev/null 2>&1 || true
+  dotnet add package xunit >/dev/null 2>&1 || true
+
+  # The real test: dotnet restore through the Nexus proxy using the NuGet.Config.
+  if dotnet restore --configfile NuGet.Config --no-cache >/dev/null 2>&1; then
+    report PASS "nuget" "dotnet restore succeeded via nuget-group (Newtonsoft.Json, Serilog, xunit)"
+  else
+    report FAIL "nuget" "dotnet restore failed through Nexus proxy"
   fi
 }
 

@@ -7,6 +7,8 @@
 #
 # Usage:
 #   HARBOR_PASS=<admin-password> \
+#   HARBOR_DB_PASSWORD=<db-password> \
+#   HARBOR_HOSTNAME=harbor.example.com \
 #   HARBOR_VERSION=v2.11.2 \
 #     ./install.sh
 #
@@ -29,6 +31,8 @@ HARBOR_DATA_DIR="${HARBOR_DATA_DIR:-/data/harbor}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARBOR_YML="${SCRIPT_DIR}/harbor.yml"
 HARBOR_PASS="${HARBOR_PASS:-}"
+HARBOR_DB_PASSWORD="${HARBOR_DB_PASSWORD:-}"
+HARBOR_HOSTNAME="${HARBOR_HOSTNAME:-harbor.internal}"
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-false}"
 
 # Remove leading 'v' for the download URL.
@@ -143,6 +147,36 @@ download_harbor() {
     log "Download complete."
   fi
 
+  # SHA256 checksum verification.
+  local checksum_url="${INSTALLER_URL}.asc"
+  local checksum_file="${tarball}.asc"
+  log "Downloading SHA256 checksum from ${checksum_url}..."
+  if curl -fSL -o "$checksum_file" "$checksum_url" 2>/dev/null; then
+    log "Verifying SHA256 checksum..."
+    # Harbor .asc files contain the SHA256 hash as the first field.
+    local expected_hash
+    expected_hash=$(awk '{print $1}' "$checksum_file")
+    local actual_hash
+    actual_hash=$(sha256sum "$tarball" | awk '{print $1}')
+    if [[ "$expected_hash" == "$actual_hash" ]]; then
+      log "Checksum verified: ${actual_hash}"
+    else
+      err "Checksum mismatch! Expected: ${expected_hash}, Got: ${actual_hash}. The download may be corrupted."
+    fi
+  else
+    warn "Could not download checksum file from ${checksum_url}. Skipping verification."
+    warn "To enforce verification, set HARBOR_CHECKSUM=<sha256> environment variable."
+    if [[ -n "${HARBOR_CHECKSUM:-}" ]]; then
+      local actual_hash
+      actual_hash=$(sha256sum "$tarball" | awk '{print $1}')
+      if [[ "${HARBOR_CHECKSUM}" == "$actual_hash" ]]; then
+        log "Checksum verified via HARBOR_CHECKSUM: ${actual_hash}"
+      else
+        err "Checksum mismatch! Expected: ${HARBOR_CHECKSUM}, Got: ${actual_hash}."
+      fi
+    fi
+  fi
+
   log "Extracting installer to ${HARBOR_INSTALLER_DIR}..."
   mkdir -p "$(dirname "$HARBOR_INSTALLER_DIR")"
   tar -xzf "$tarball" -C "$(dirname "$HARBOR_INSTALLER_DIR")"
@@ -173,13 +207,30 @@ apply_config() {
     cp "$override" "${HARBOR_INSTALLER_DIR}/docker-compose.override.yml"
   fi
 
-  # Replace placeholder passwords if HARBOR_PASS is set.
+  # Replace hostname if HARBOR_HOSTNAME is set (default: harbor.internal).
+  if [[ "$HARBOR_HOSTNAME" != "harbor.internal" ]]; then
+    log "Setting hostname to ${HARBOR_HOSTNAME}..."
+    sed -i "s/^hostname:.*/hostname: ${HARBOR_HOSTNAME}/" \
+      "${HARBOR_INSTALLER_DIR}/harbor.yml"
+    sed -i "s|^external_url:.*|external_url: https://${HARBOR_HOSTNAME}|" \
+      "${HARBOR_INSTALLER_DIR}/harbor.yml"
+  fi
+
+  # Replace placeholder passwords if environment variables are set.
   if [[ -n "$HARBOR_PASS" ]]; then
     log "Setting Harbor admin password from HARBOR_PASS..."
     sed -i "s/^harbor_admin_password:.*/harbor_admin_password: ${HARBOR_PASS}/" \
       "${HARBOR_INSTALLER_DIR}/harbor.yml"
   else
     warn "HARBOR_PASS not set. The default CHANGE_ME password will be used."
+  fi
+
+  if [[ -n "$HARBOR_DB_PASSWORD" ]]; then
+    log "Setting database password from HARBOR_DB_PASSWORD..."
+    sed -i "s/^  password: CHANGE_ME_DB_PASSWORD/  password: ${HARBOR_DB_PASSWORD}/" \
+      "${HARBOR_INSTALLER_DIR}/harbor.yml"
+  else
+    warn "HARBOR_DB_PASSWORD not set. The default CHANGE_ME_DB_PASSWORD will be used."
   fi
 
   # Create data directories.
@@ -210,7 +261,7 @@ install_harbor() {
 # Wait for Harbor to be ready
 # ---------------------------------------------------------------------------
 wait_for_harbor() {
-  local url="https://harbor.internal/api/v2.0/systeminfo"
+  local url="https://${HARBOR_HOSTNAME}/api/v2.0/systeminfo"
   local max_wait=120
   local elapsed=0
 
@@ -240,7 +291,7 @@ post_install() {
   # RBAC setup.
   if [[ -x "${SCRIPT_DIR}/rbac-setup.sh" ]]; then
     log "Running RBAC setup..."
-    HARBOR_URL="https://harbor.internal" \
+    HARBOR_URL="https://${HARBOR_HOSTNAME}" \
     HARBOR_USER="admin" \
     HARBOR_PASS="$admin_pass" \
       bash "${SCRIPT_DIR}/rbac-setup.sh"
@@ -251,7 +302,7 @@ post_install() {
   # GC schedule.
   if [[ -x "${SCRIPT_DIR}/gc-schedule.sh" ]]; then
     log "Configuring GC schedule..."
-    HARBOR_URL="https://harbor.internal" \
+    HARBOR_URL="https://${HARBOR_HOSTNAME}" \
     HARBOR_USER="admin" \
     HARBOR_PASS="$admin_pass" \
       bash "${SCRIPT_DIR}/gc-schedule.sh"
@@ -282,15 +333,15 @@ main() {
   log "================================================================"
   log " Harbor installation complete!"
   log ""
-  log " Web UI:    https://harbor.internal"
+  log " Web UI:    https://${HARBOR_HOSTNAME}"
   log " Admin:     admin / <HARBOR_PASS>"
-  log " Metrics:   https://harbor.internal:9090/metrics"
+  log " Metrics:   https://${HARBOR_HOSTNAME}:9090/metrics"
   log ""
   log " Next steps:"
   log "   1. Change the admin password if you used the default."
   log "   2. Configure replication: ./replication-setup.sh"
   log "   3. Distribute TLS CA cert to developer machines."
-  log "   4. Test: podman login harbor.internal"
+  log "   4. Test: podman login ${HARBOR_HOSTNAME}"
   log "================================================================"
 }
 

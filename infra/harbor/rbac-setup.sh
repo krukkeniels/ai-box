@@ -184,6 +184,22 @@ PULL_PERMISSIONS='[
   {"resource": "scan", "action": "read"}
 ]'
 
+# Admin permissions for project management, replication, and scanning.
+ADMIN_PERMISSIONS='[
+  {"resource": "repository", "action": "push"},
+  {"resource": "repository", "action": "pull"},
+  {"resource": "repository", "action": "delete"},
+  {"resource": "artifact", "action": "read"},
+  {"resource": "artifact", "action": "delete"},
+  {"resource": "artifact-label", "action": "create"},
+  {"resource": "artifact-label", "action": "delete"},
+  {"resource": "tag", "action": "create"},
+  {"resource": "tag", "action": "delete"},
+  {"resource": "tag", "action": "list"},
+  {"resource": "scan", "action": "create"},
+  {"resource": "scan", "action": "read"}
+]'
+
 create_robot_account "aibox-ci" \
   "CI pipeline account -- push and pull images" \
   "$CI_PERMISSIONS"
@@ -191,6 +207,10 @@ create_robot_account "aibox-ci" \
 create_robot_account "aibox-pull" \
   "Developer pull-only account" \
   "$PULL_PERMISSIONS"
+
+create_robot_account "aibox-admin" \
+  "Admin account -- full project management" \
+  "$ADMIN_PERMISSIONS"
 
 # ---------------------------------------------------------------------------
 # 3. Configure vulnerability scanning policy (scan-on-push)
@@ -226,8 +246,9 @@ log "RBAC setup complete."
 log ""
 log "Summary:"
 log "  Project:          ${PROJECT_NAME}"
-log "  Robot (CI):       robot\$aibox-ci   -- push + pull"
+log "  Robot (CI):       robot\$aibox-ci    -- push + pull"
 log "  Robot (pull):     robot\$aibox-pull  -- pull only"
+log "  Robot (admin):    robot\$aibox-admin -- full project management"
 log "  Scan-on-push:     enabled"
 log "  Severity block:   critical"
 log "  OCI artifacts:    enabled (Harbor 2.x default)"

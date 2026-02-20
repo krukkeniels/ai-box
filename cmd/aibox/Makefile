@@ -7,7 +7,7 @@ LDFLAGS := -X main.version=$(VERSION) \
            -X main.commit=$(COMMIT) \
            -X main.date=$(DATE)
 
-.PHONY: build test test-unit test-integration test-security benchmark lint clean
+.PHONY: build test test-unit test-integration test-security test-e2e benchmark lint clean
 
 build:
 	CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
@@ -23,7 +23,10 @@ test-integration: build
 test-security: build
 	go test -tags=security -timeout 120s ./tests/security/
 
-test-all: test-unit test-integration test-security
+test-e2e: build
+	go test -tags=integration -timeout 300s ./tests/
+
+test-all: test-unit test-integration test-security test-e2e
 
 benchmark: build
 	./tests/benchmark/run.sh

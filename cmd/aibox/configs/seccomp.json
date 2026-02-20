@@ -17,6 +17,7 @@
         "stat",
         "fstat",
         "lstat",
+        "statx",
         "newfstatat",
         "access",
         "faccessat",

@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
+	"os/exec"
 
 	"github.com/aibox/aibox/internal/config"
 	"github.com/aibox/aibox/internal/logging"
@@ -29,6 +31,8 @@ func SetVersionInfo(v, c, d string) {
 	version = v
 	commit = c
 	buildDate = d
+	rootCmd.Version = v
+	rootCmd.SetVersionTemplate(fmt.Sprintf("aibox version {{.Version}} (commit: %s, built: %s)\n", c, d))
 }
 
 var rootCmd = &cobra.Command{
@@ -47,6 +51,18 @@ of sandbox containers including setup, start, stop, and health checks.`,
 		Cfg, err = config.Load(cfgFile)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
+		}
+
+		// Auto-detect runtime if the configured one is not available.
+		if _, lookErr := exec.LookPath(Cfg.Runtime); lookErr != nil {
+			fallback := "docker"
+			if Cfg.Runtime == "docker" {
+				fallback = "podman"
+			}
+			if _, fbErr := exec.LookPath(fallback); fbErr == nil {
+				slog.Info("configured runtime not found, falling back", "configured", Cfg.Runtime, "using", fallback)
+				Cfg.Runtime = fallback
+			}
 		}
 
 		return nil

@@ -42,6 +42,11 @@ func CacheVolumes(prefix string) []CacheVolume {
 			ContainerPath: "/home/dev/.cache/bazel",
 			Description:   "Bazel cache",
 		},
+		{
+			VolumeName:    prefix + "-nuget-cache",
+			ContainerPath: "/home/dev/.nuget/packages",
+			Description:   "NuGet package cache",
+		},
 	}
 }
 

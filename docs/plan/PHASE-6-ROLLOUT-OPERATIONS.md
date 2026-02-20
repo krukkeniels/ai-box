@@ -1,7 +1,7 @@
 # Phase 6: Rollout & Operations
 
 **Phase**: 6 of 6
-**Estimated Effort**: 8-10 engineer-weeks (spread over 15-22+ weeks calendar time)
+**Estimated Effort**: 9-11 engineer-weeks (spread over 15-22+ weeks calendar time)
 **Team Size**: 2-3 engineers + champions + support rotation
 **Dependencies**: Phases 0-4 complete; Phase 5 can proceed in parallel with early rollout stages
 **Spec Sections**: Section 21 (Transition and Rollout Plan), Section 22 (Operations)
@@ -55,7 +55,9 @@ The overarching principle is **invisible security**: if developers notice fricti
 **What to do**:
 
 1. **Select pilot cohort** (10 volunteer developers):
-   - Ensure diversity: at least 2 teams represented, both Windows 11/WSL2 and native Linux, both VS Code and JetBrains users, mix of project types (Java, Node, Python, monorepo).
+   - Ensure diversity: at least 3 teams represented, both VS Code and JetBrains users, mix of project types (Java, Node, Python, .NET, monorepo).
+   - **Must include**: at least 2 .NET developers, 1 PowerShell script user, and 1 AngularJS project member.
+   - **Windows 11 + WSL2 is mandatory** for all pilot participants (100% of the target team is Windows). Native Linux is not the primary deployment path.
    - Prioritize developers who are enthusiastic but also honest about friction.
 
 2. **Pair each pilot developer with a platform engineer** for their first day:
@@ -101,6 +103,7 @@ The overarching principle is **invisible security**: if developers notice fricti
    - `aibox setup` must complete without manual intervention on supported machines.
    - `aibox doctor` must catch and explain all common setup issues.
    - First-run experience must result in a working sandbox within the 90-second cold start SLA.
+   - **Tool pack validation gate**: `dotnet@8`, `powershell@7`, and `angularjs@1` packs must be validated and working before early adopter enrollment opens.
 
 3. **Run Early Adopter phase for 6 weeks** (spec Weeks 9-14):
    - Weekly feedback surveys.
@@ -233,6 +236,7 @@ The overarching principle is **invisible security**: if developers notice fricti
 3. **Establish migration office hours** (3x/week during general rollout):
    - Platform engineers available for live troubleshooting.
    - Scheduled at different times to accommodate different team schedules.
+   - Dedicated topics include: .NET project migration, PowerShell script porting, AngularJS legacy build setup, custom CLI migration to Linux.
 
 4. **Track and report adoption metrics**:
    - Active AI-Box users / total developers (target: > 90%).
@@ -335,7 +339,8 @@ The overarching principle is **invisible security**: if developers notice fricti
    - Emergency tool pack updates for critical security issues.
 
 5. **Compatibility testing**:
-   - Monthly test matrix: Windows 11 + WSL2, native Linux, VS Code (latest), JetBrains (latest).
+   - Monthly test matrix: Windows 11 + WSL2 (primary), native Linux, VS Code (latest), JetBrains (latest).
+   - Full polyglot stack validation under WSL2: .NET + JVM + Node + Bazel + PowerShell + AI agent.
    - Automated where possible; manual for IDE-specific workflows.
    - Results published to platform team and champions.
 
@@ -437,13 +442,26 @@ The overarching principle is **invisible security**: if developers notice fricti
 ### Migration Patterns for Existing Projects
 
 - Survey existing projects to identify:
-  - Language/runtime distribution (Java, Node, Python, Scala, mixed).
-  - Build system distribution (Gradle, Maven, npm, Bazel, other).
+  - Language/runtime distribution (Java, Node, Python, Scala, .NET/C#, mixed polyglot).
+  - Build system distribution (Gradle, Maven, npm, Bazel, MSBuild/NuGet, other).
+  - Scripting language usage (bash, PowerShell, custom CLIs).
   - Special dependencies (databases, message queues, external services used in dev).
-  - Custom development tooling or scripts that may need adaptation.
-- Develop per-project-type migration checklists.
+  - Custom development tooling or scripts that may need adaptation (especially Windows-origin CLIs).
+- Develop per-project-type migration checklists, including .NET, PowerShell, and AngularJS projects.
 - Identify projects with unique requirements that need custom tool packs or policy exceptions.
 - Estimate migration effort per project type to inform rollout scheduling.
+
+### WSL2 Polyglot Validation
+
+- Before general rollout, validate the full polyglot stack under WSL2 + Podman + gVisor:
+  - .NET SDK 8 (`dotnet build`, `dotnet test`, `dotnet restore` through Nexus proxy)
+  - JVM (Gradle/Maven builds, daemon stability)
+  - Node.js (npm/yarn install, Angular/AngularJS builds)
+  - Bazel (sandbox-within-gVisor validation)
+  - PowerShell Core (script execution, module installation)
+  - AI agent (Claude Code / Codex CLI running concurrently with builds)
+  - Combined resource pressure: all of the above running simultaneously
+- Document WSL2-specific issues and workarounds in a living document updated throughout rollout.
 
 ---
 
@@ -451,23 +469,17 @@ The overarching principle is **invisible security**: if developers notice fricti
 
 1. **Mandatory cutover timeline**: What is the target date for Phase 4 (Mandatory) where local dev is unsupported? Is this a hard deadline or flexible based on adoption metrics?
 
-2. **Feedback tool selection**: Should we build a custom feedback mechanism into the `aibox` CLI or use an external survey tool? Integration is better for adoption, external is faster to deploy.
+2. **Champion incentives**: What formal recognition do champions receive? Performance review credit, team allocation adjustment, or purely voluntary?
 
-3. **Champion incentives**: What formal recognition do champions receive? Performance review credit, team allocation adjustment, or purely voluntary?
+3. **Telemetry privacy**: What usage telemetry can we collect from developer machines? Startup time and crash reports are likely acceptable; command history or file access patterns are not.
 
-4. **Support tooling**: Slack channel alone or a ticketing system? Slack is faster but loses history; tickets are trackable but add friction.
+4. **Rollout blocking on Phase 5**: Does the classified environment compliance requirement mean audit capabilities (Phase 5) must be complete before the pilot begins, or can audit run in parallel with early rollout?
 
-5. **Telemetry privacy**: What usage telemetry can we collect from developer machines? Startup time and crash reports are likely acceptable; command history or file access patterns are not.
+5. **Multi-project developers**: How do developers who work on multiple projects manage multiple sandbox instances? One per project, or a single sandbox with multiple workspaces?
 
-6. **Rollout blocking on Phase 5**: Does the classified environment compliance requirement mean audit capabilities (Phase 5) must be complete before the pilot begins, or can audit run in parallel with early rollout?
+6. **Machine provisioning**: Who is responsible for upgrading developer machines that do not meet the minimum spec (16GB RAM, SSD, 8+ cores)? For polyglot workloads, 32GB is recommended. Hardware procurement timelines could delay rollout.
 
-7. **Multi-project developers**: How do developers who work on multiple projects manage multiple sandbox instances? One per project, or a single sandbox with multiple workspaces?
-
-8. **Machine provisioning**: Who is responsible for upgrading developer machines that do not meet the minimum spec (16GB RAM, SSD, 8+ cores)? Hardware procurement timelines could delay rollout.
-
-9. **Notification mechanism for git push approvals**: Slack, email, dashboard, or IDE plugin? Needs to be low-latency and reliable.
-
-10. **Team migration order**: Do we migrate by team willingness (easiest first), by project complexity (simplest first), or by security sensitivity (most sensitive first)?
+7. **Team migration order**: Do we migrate by team willingness (easiest first), by project complexity (simplest first), or by security sensitivity (most sensitive first)?
 
 ---
 
@@ -564,10 +576,11 @@ All of the above, plus:
 | Champions Program | 1 eng-week | Weeks 19-20 | Setup overlaps with early adopter phase |
 | Training Materials | 1-2 eng-weeks | Weeks 17-20 | Draft during pilot, finalize during early adopter |
 | General Rollout | 2-3 eng-weeks | Weeks 22-28+ | Calendar time longer than effort due to team-by-team pacing |
+| WSL2 Polyglot Validation | 1 eng-week | Weeks 20-21 | Full stack validation under WSL2 before general rollout |
 | Support Model | 0.5 eng-week | Week 18-19 | Define process and tooling; execution is ongoing |
 | Day-2 Operations | 1-2 eng-weeks | Weeks 20-22 | Runbooks + dashboards + alerting setup |
 | Disaster Recovery | 0.5-1 eng-week | Week 21-22 | Documentation + tabletop exercise |
-| **Total** | **8-10 eng-weeks** | **~14 weeks calendar** | Spread over Weeks 15-28+, with 2-3 engineers |
+| **Total** | **9-11 eng-weeks** | **~15 weeks calendar** | Spread over Weeks 15-28+, with 2-3 engineers |
 
 **Staffing model**:
 - Weeks 15-22 (pilot through early adopter): 2-3 engineers, 0.5 FTE on support rotation.

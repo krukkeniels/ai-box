@@ -9,6 +9,7 @@
 # ---------- Hostname ----------
 # The external-facing hostname or IP used to access Harbor.
 # Do NOT use localhost or 127.0.0.1.
+# Override at install time: HARBOR_HOSTNAME=registry.example.com ./install.sh
 hostname: harbor.internal
 
 # ---------- HTTP / HTTPS ----------
@@ -30,9 +31,11 @@ internal_tls:
 external_url: https://harbor.internal
 
 # ---------- Admin Credentials ----------
+# Override at install time: HARBOR_PASS=<secret> ./install.sh
 harbor_admin_password: CHANGE_ME
 
 # ---------- Database (Internal PostgreSQL) ----------
+# Override at install time: HARBOR_DB_PASSWORD=<secret> ./install.sh
 database:
   password: CHANGE_ME_DB_PASSWORD
   max_idle_conns: 100

@@ -103,12 +103,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [java, node, full]
+        variant: [java, node, dotnet, full]
         include:
           - variant: java
             stable_tag: "21-24.04"
           - variant: node
             stable_tag: "20-24.04"
+          - variant: dotnet
+            stable_tag: "8-24.04"
           - variant: full
             stable_tag: "24.04"
     steps:

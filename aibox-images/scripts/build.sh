@@ -9,7 +9,7 @@
 #   ./scripts/build.sh <variant> <stable_tag> <registry> [--no-cache]
 #
 # Arguments:
-#   variant     - Image variant to build: base, java, node, full
+#   variant     - Image variant to build: base, java, node, dotnet, full
 #   stable_tag  - Stable tag to apply (e.g. 24.04, 21-24.04)
 #   registry    - Registry URL (e.g. harbor.internal/aibox)
 #   --no-cache  - Optional: build without layer cache (for fresh base layers)
@@ -26,7 +26,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VARIANTS=(base java node full)
+VARIANTS=(base java node dotnet full)
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -36,7 +36,7 @@ usage() {
 Usage: $(basename "$0") <variant> <stable_tag> <registry> [--no-cache]
 
 Arguments:
-  variant     Image variant: base, java, node, full
+  variant     Image variant: base, java, node, dotnet, full
   stable_tag  Stable tag (e.g. 24.04, 21-24.04)
   registry    Registry URL (e.g. harbor.internal/aibox)
   --no-cache  Build without layer cache

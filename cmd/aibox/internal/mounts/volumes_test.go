@@ -7,9 +7,9 @@ import (
 
 func TestCacheVolumes_Count(t *testing.T) {
 	vols := CacheVolumes("aibox-testuser")
-	// Spec requires: maven, gradle, npm, yarn, bazel.
-	if len(vols) != 5 {
-		t.Errorf("CacheVolumes() returned %d volumes, want 5", len(vols))
+	// Spec requires: maven, gradle, npm, yarn, bazel, nuget.
+	if len(vols) != 6 {
+		t.Errorf("CacheVolumes() returned %d volumes, want 6", len(vols))
 	}
 }
 
@@ -34,6 +34,7 @@ func TestCacheVolumes_ExpectedNames(t *testing.T) {
 		"-npm-cache",
 		"-yarn-cache",
 		"-bazel-cache",
+		"-nuget-cache",
 	}
 
 	names := make(map[string]bool)
@@ -58,6 +59,7 @@ func TestCacheVolumes_ContainerPaths(t *testing.T) {
 		"/home/dev/.npm":           false,
 		"/home/dev/.yarn/cache":    false,
 		"/home/dev/.cache/bazel":   false,
+		"/home/dev/.nuget/packages": false,
 	}
 
 	for _, v := range vols {

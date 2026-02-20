@@ -13,10 +13,11 @@ profile aibox-sandbox flags=(attach_disconnected,mediate_deleted) {
   deny /**/.ssh/** rw,
 
   # Deny container runtime socket access
-  deny /var/run/docker.sock rw,
+  deny /**/docker.sock rw,
 
   # Deny dangerous proc/sys paths
   deny /proc/*/mem rw,
+  deny /proc/*/environ r,
   deny /proc/kcore rw,
   deny /proc/sysrq-trigger rw,
   deny /sys/firmware/** rw,
@@ -55,8 +56,7 @@ profile aibox-sandbox flags=(attach_disconnected,mediate_deleted) {
   /dev/pts/* rw,
   /dev/tty rw,
   /dev/fd/** rw,
-  /proc/ r,
-  /proc/** r,
+  /proc/self/** r,
   /sys/ r,
   /sys/** r,
 

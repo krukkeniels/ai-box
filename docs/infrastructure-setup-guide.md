@@ -63,6 +63,8 @@ aibox-images/
   base/policy-default.yaml
   java/Containerfile
   node/Containerfile
+  dotnet/Containerfile
+  dotnet/nuget.config
   full/Containerfile
   ci/build-and-publish.yml
   ci/weekly-rebuild.yml
@@ -107,7 +109,10 @@ Run the installer:
 
 ```bash
 cd infra/harbor
-HARBOR_PASS='<your-admin-password>' ./install.sh
+HARBOR_PASS='<your-admin-password>' \
+HARBOR_DB_PASSWORD='<your-db-password>' \
+HARBOR_HOSTNAME='harbor.internal' \
+  ./install.sh
 ```
 
 The script will:
@@ -150,6 +155,7 @@ This creates:
 - Project `aibox` with auto-scan enabled (scan-on-push, block critical CVEs)
 - Robot account `robot$aibox-ci` (push + pull, for CI pipeline)
 - Robot account `robot$aibox-pull` (pull-only, for developer machines)
+- Robot account `robot$aibox-admin` (full project management, for platform team)
 
 **Save the robot account secrets** printed during creation. They are shown only once.
 
@@ -350,6 +356,7 @@ Summary of rotation triggers:
 | `aibox/base` | `24.04` | Ubuntu 24.04 | git, ssh-server, jq, yq, vim, nano, bash, zsh, tmux, build-essential, python3, curl, wget |
 | `aibox/java` | `21-24.04` | `aibox/base:24.04` | Eclipse Temurin JDK 21, Maven 3.9.9, Gradle 8.12 |
 | `aibox/node` | `20-24.04` | `aibox/base:24.04` | Node.js 20 LTS, Yarn |
+| `aibox/dotnet` | `8-24.04` | `aibox/base:24.04` | .NET SDK 8, NuGet configured for Nexus mirror |
 | `aibox/full` | `24.04` | `aibox/base:24.04` | JDK 21, Maven, Gradle, Node.js 20, Yarn, python3-venv, Poetry |
 
 All images:
@@ -495,14 +502,27 @@ NEXUS_URL=http://nexus.internal:8081 ./infra/nexus/test-mirrors.sh
 
 Expected: all tested formats pass.
 
-### Exit Criterion 4: Base Image Builds are Automated
+### Exit Criterion 4: NuGet/dotnet Restore Works Through Nexus
+
+```bash
+# Create a test project and restore through the Nexus proxy
+dotnet new console -n nuget-test && cd nuget-test
+dotnet add package Newtonsoft.Json
+dotnet restore --source http://nexus.internal:8081/repository/nuget-group/index.json
+```
+
+Or use the `nuget.config` template from `infra/nexus/nuget.config`. The automated test suite (`test-mirrors.sh`) also validates this with multiple NuGet packages and V3 feed discovery.
+
+Expected: `dotnet restore` succeeds; NuGet V3 service index is accessible at `http://nexus.internal:8081/repository/nuget-group/index.json`.
+
+### Exit Criterion 5: Base Image Builds are Automated
 
 Push a trivial change to `main` in the `aibox-images` repository and verify:
 1. The CI pipeline triggers automatically
 2. The image is built, scanned, signed, and pushed to Harbor
 3. The image appears in the Harbor UI under project `aibox`
 
-### Exit Criterion 5: Weekly Rebuild Pipeline is Scheduled
+### Exit Criterion 6: Weekly Rebuild Pipeline is Scheduled
 
 Verify the weekly rebuild workflow exists and has run at least once:
 
@@ -515,7 +535,7 @@ cat aibox-images/ci/weekly-rebuild.yml | grep cron
 # Use workflow_dispatch in the CI platform
 ```
 
-### Exit Criterion 6: Trivy Scan Passes
+### Exit Criterion 7: Trivy Scan Passes
 
 ```bash
 ./scripts/scan-check.sh harbor.internal/aibox/base:24.04
@@ -523,29 +543,31 @@ cat aibox-images/ci/weekly-rebuild.yml | grep cron
 
 Expected: exit code 0, zero critical CVEs. Any high CVEs should be documented with justification.
 
-### Exit Criterion 7: Image Variants Exist
+### Exit Criterion 8: Image Variants Exist
 
 ```bash
 podman pull harbor.internal/aibox/java:21-24.04
 podman pull harbor.internal/aibox/node:20-24.04
+podman pull harbor.internal/aibox/dotnet:8-24.04
 podman pull harbor.internal/aibox/full:24.04
 
 # Verify signatures on all variants
 cosign verify --key /etc/aibox/cosign.pub harbor.internal/aibox/java:21-24.04
 cosign verify --key /etc/aibox/cosign.pub harbor.internal/aibox/node:20-24.04
+cosign verify --key /etc/aibox/cosign.pub harbor.internal/aibox/dotnet:8-24.04
 cosign verify --key /etc/aibox/cosign.pub harbor.internal/aibox/full:24.04
 ```
 
-Expected: all three variants pull and verify successfully.
+Expected: all four variants pull and verify successfully.
 
-### Exit Criterion 8: Git Repositories are Created
+### Exit Criterion 9: Git Repositories are Created
 
 Verify the following repositories exist with branch protection and signed-commit requirements:
 - `aibox-images`
 - `aibox-policies`
 - `aibox-toolpacks`
 
-### Exit Criterion 9: Documentation is Written
+### Exit Criterion 10: Documentation is Written
 
 You are reading it. Confirm that these companion documents also exist:
 - [cosign-key-management.md](cosign-key-management.md) -- Key rotation, revocation, backup, access control
