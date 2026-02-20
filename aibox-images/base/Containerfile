@@ -46,9 +46,23 @@ RUN curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/y
     && chmod +x /usr/local/bin/yq
 
 # ---------------------------------------------------------------------------
+# PowerShell Core 7.x (from Microsoft APT repository)
+# ---------------------------------------------------------------------------
+RUN . /etc/os-release \
+    && curl -fsSL "https://packages.microsoft.com/config/ubuntu/${VERSION_ID}/packages-microsoft-prod.deb" \
+       -o /tmp/packages-microsoft-prod.deb \
+    && dpkg -i /tmp/packages-microsoft-prod.deb \
+    && rm /tmp/packages-microsoft-prod.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       powershell \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
 # Create non-root user
 # ---------------------------------------------------------------------------
-RUN useradd -m -s /bin/bash -u 1000 dev \
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && useradd -m -s /bin/bash -u 1000 dev \
     && mkdir -p /home/dev/.ssh \
     && chmod 700 /home/dev/.ssh \
     && chown -R dev:dev /home/dev/.ssh
@@ -68,6 +82,36 @@ COPY sshd_config /etc/ssh/sshd_config
 RUN mkdir -p /etc/aibox /opt/toolpacks /workspace \
     && chown dev:dev /workspace
 COPY policy-default.yaml /etc/aibox/policy.yaml
+
+# ---------------------------------------------------------------------------
+# Package manager proxy configurations (Nexus mirrors)
+# ---------------------------------------------------------------------------
+COPY configs/package-managers/ /etc/aibox/package-managers/
+
+# npm: system-wide config
+RUN cp /etc/aibox/package-managers/npmrc /etc/npmrc
+
+# pip: system-wide config
+RUN cp /etc/aibox/package-managers/pip.conf /etc/pip.conf
+
+# Maven: per-user settings
+RUN mkdir -p /home/dev/.m2 \
+    && cp /etc/aibox/package-managers/settings.xml /home/dev/.m2/settings.xml \
+    && chown -R dev:dev /home/dev/.m2
+
+# NuGet: per-user config
+RUN mkdir -p /home/dev/.nuget/NuGet \
+    && cp /etc/aibox/package-managers/NuGet.Config /home/dev/.nuget/NuGet/NuGet.Config \
+    && chown -R dev:dev /home/dev/.nuget
+
+# Cargo: per-user config
+RUN mkdir -p /home/dev/.cargo \
+    && cp /etc/aibox/package-managers/cargo-config.toml /home/dev/.cargo/config.toml \
+    && chown -R dev:dev /home/dev/.cargo
+
+# Go: system-wide env via profile.d
+RUN cp /etc/aibox/package-managers/go-env.sh /etc/profile.d/aibox-go-env.sh \
+    && chmod +x /etc/profile.d/aibox-go-env.sh
 
 WORKDIR /workspace
 USER dev

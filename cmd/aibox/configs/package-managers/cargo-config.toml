@@ -1,0 +1,9 @@
+# AI-Box Cargo configuration
+# Note: Nexus Cargo proxy support is limited. If Cargo packages fail to resolve,
+# contact platform team for assistance.
+
+[registries.nexus]
+index = "sparse+https://nexus.internal/repository/cargo-proxy/"
+
+[source.crates-io]
+replace-with = "nexus"

@@ -1,15 +1,15 @@
 # =============================================================================
 # AI-Box Full Variant Image ("Kitchen Sink")
 # =============================================================================
-# Extends the base image with Java 21, Node.js 20, and Python extras (venv,
-# Poetry) for polyglot development sandboxes that need multiple runtimes.
+# Extends the base image with Java 21, Node.js 20, Python extras (venv,
+# Poetry), Bazel (via Bazelisk), and .NET SDK 8 for polyglot development.
 # =============================================================================
 
 FROM harbor.internal/aibox/base:24.04
 
 LABEL maintainer="platform-team@aibox.internal" \
       version="24.04" \
-      description="AI-Box full developer sandbox (Java 21 + Node 20 + Python extras)" \
+      description="AI-Box full developer sandbox (Java 21 + Node 20 + Python + Bazel + .NET 8)" \
       org.opencontainers.image.source="https://git.internal/aibox/aibox-images"
 
 USER root
@@ -93,6 +93,28 @@ RUN curl -sSL https://install.python-poetry.org | python3 - \
     && ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry
 
 # ---------------------------------------------------------------------------
+# Bazelisk (Bazel version manager)
+# ---------------------------------------------------------------------------
+RUN curl -fsSL "https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64" \
+        -o /usr/local/bin/bazel \
+    && chmod +x /usr/local/bin/bazel
+
+# ---------------------------------------------------------------------------
+# .NET SDK 8 (from Microsoft APT repository)
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+       | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+       > /etc/apt/sources.list.d/microsoft.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       dotnet-sdk-8.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV PATH="${DOTNET_ROOT}:${DOTNET_ROOT}/tools:${PATH}"
+
+# ---------------------------------------------------------------------------
 # Cache directories for dependency persistence across sessions
 # ---------------------------------------------------------------------------
 RUN mkdir -p \
@@ -101,12 +123,24 @@ RUN mkdir -p \
         /home/dev/.npm \
         /home/dev/.yarn \
         /home/dev/.cache/pypoetry \
+        /home/dev/.cache/bazel \
+        /home/dev/.nuget/packages \
+        /home/dev/.dotnet/tools \
     && chown -R dev:dev \
         /home/dev/.m2 \
         /home/dev/.gradle \
         /home/dev/.npm \
         /home/dev/.yarn \
-        /home/dev/.cache
+        /home/dev/.cache \
+        /home/dev/.nuget \
+        /home/dev/.dotnet
+
+# ---------------------------------------------------------------------------
+# Gradle init script: route plugin/dependency downloads through Nexus
+# ---------------------------------------------------------------------------
+RUN mkdir -p /home/dev/.gradle/init.d \
+    && cp /etc/aibox/package-managers/nexus-mirror.gradle /home/dev/.gradle/init.d/nexus-mirror.gradle \
+    && chown -R dev:dev /home/dev/.gradle
 
 USER dev
 WORKDIR /workspace

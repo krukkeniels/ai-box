@@ -1,0 +1,27 @@
+# DNS-over-HTTPS resolver IPs
+# These are blocked to prevent DNS bypass via HTTPS
+# Updated: 2026-02-20
+# Source: https://github.com/curl/curl/wiki/DNS-over-HTTPS
+#
+# Used by AI-Box nftables rules to block direct DoH connections
+# from sandboxed containers. All DNS must go through CoreDNS.
+
+# Google (dns.google)
+8.8.8.8
+8.8.4.4
+
+# Cloudflare (cloudflare-dns.com)
+1.1.1.1
+1.0.0.1
+
+# Quad9 (dns.quad9.net)
+9.9.9.9
+149.112.112.112
+
+# OpenDNS (doh.opendns.com)
+208.67.222.222
+208.67.220.220
+
+# CleanBrowsing (doh.cleanbrowsing.org)
+185.228.168.168
+185.228.169.168

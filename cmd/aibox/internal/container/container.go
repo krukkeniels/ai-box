@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/aibox/aibox/internal/config"
+	"github.com/aibox/aibox/internal/mounts"
+	"github.com/aibox/aibox/internal/security"
 )
 
 // StartOpts holds the options for starting a container.
@@ -111,23 +113,33 @@ func (m *Manager) Start(opts StartOpts) error {
 			platform = "systrap"
 		}
 		args = append(args, "--runtime=runsc")
-		// Pass platform to runsc via annotations.
-		args = append(args, "--annotation", fmt.Sprintf("dev.gvisor.spec.platform=%s", platform))
+		// Pass platform to runsc via annotations (podman-only flag).
+		if m.RuntimeName == "podman" {
+			args = append(args, "--annotation", fmt.Sprintf("dev.gvisor.spec.platform=%s", platform))
+		}
 	}
 
 	// Security: mandatory flags (spec 9.4).
 	args = append(args, "--cap-drop=ALL")
 	args = append(args, "--security-opt=no-new-privileges:true")
 
-	// Seccomp profile.
+	// Seccomp profile (mandatory — refuse to launch without it).
 	seccompPath := m.findSeccompProfile()
-	if seccompPath != "" {
-		args = append(args, fmt.Sprintf("--security-opt=seccomp=%s", seccompPath))
+	if seccompPath == "" {
+		return fmt.Errorf("seccomp profile not found; refusing to launch without seccomp enforcement.\n" +
+			"Install it: sudo mkdir -p /etc/aibox && sudo cp configs/seccomp.json /etc/aibox/seccomp.json")
 	}
+	args = append(args, fmt.Sprintf("--security-opt=seccomp=%s", seccompPath))
 
-	// AppArmor profile (only if the profile is actually loaded on the host).
-	if m.isAppArmorProfileLoaded() {
+	// AppArmor profile enforcement.
+	if security.IsAppArmorAvailable() {
+		if !m.isAppArmorProfileLoaded() {
+			return fmt.Errorf("AppArmor is available but aibox-sandbox profile is not loaded; refusing to launch.\n" +
+				"Load it: sudo apparmor_parser -r configs/apparmor/aibox-sandbox")
+		}
 		args = append(args, "--security-opt=apparmor=aibox-sandbox")
+	} else {
+		slog.Warn("AppArmor kernel module not available; skipping AppArmor enforcement (reduced isolation)")
 	}
 
 	// Read-only root filesystem.
@@ -136,30 +148,51 @@ func (m *Manager) Start(opts StartOpts) error {
 	// Run as non-root user.
 	args = append(args, "--user=1000:1000")
 
-	// Networking: none for Phase 1.
-	args = append(args, "--network=none")
+	// Networking: proxy-controlled egress (Phase 2).
+	// Container traffic routes through Squid proxy and CoreDNS on the host.
+	// nftables rules on the host enforce that the container can only reach
+	// the proxy and DNS — all other egress is dropped.
+	if m.Cfg.Network.Enabled {
+		proxyAddr := fmt.Sprintf("%s:%d", m.Cfg.Network.ProxyAddr, m.Cfg.Network.ProxyPort)
+		proxyURL := fmt.Sprintf("http://%s", proxyAddr)
+
+		// Set proxy environment variables so tools inside the container
+		// route traffic through Squid. These are a convenience — nftables
+		// blocks direct egress even if a process unsets them.
+		args = append(args, "-e", fmt.Sprintf("http_proxy=%s", proxyURL))
+		args = append(args, "-e", fmt.Sprintf("https_proxy=%s", proxyURL))
+		args = append(args, "-e", fmt.Sprintf("HTTP_PROXY=%s", proxyURL))
+		args = append(args, "-e", fmt.Sprintf("HTTPS_PROXY=%s", proxyURL))
+		args = append(args, "-e", "no_proxy=localhost,127.0.0.1")
+		args = append(args, "-e", "NO_PROXY=localhost,127.0.0.1")
+
+		// Configure AI tool base URLs to use the LLM sidecar proxy.
+		args = append(args, "-e", "ANTHROPIC_BASE_URL=http://localhost:8443")
+		args = append(args, "-e", "OPENAI_BASE_URL=http://localhost:8443")
+
+		// Set container DNS to CoreDNS on the host.
+		args = append(args, fmt.Sprintf("--dns=%s", m.Cfg.Network.DNSAddr))
+	} else {
+		// No network security stack — isolate completely.
+		args = append(args, "--network=none")
+	}
 
 	// Resource limits.
 	args = append(args, fmt.Sprintf("--cpus=%s", strconv.Itoa(cpus)))
 	args = append(args, fmt.Sprintf("--memory=%s", memory))
 
-	// Filesystem mounts (spec 10.1).
-	// Use --mount syntax for Docker compatibility (Docker's -v does not support nosuid,nodev).
+	// Filesystem mounts (spec 10.1) — built from the mounts package.
+	mountLayout, err := mounts.Layout(workspace, tmpSize, "1g")
+	if err != nil {
+		return fmt.Errorf("building mount layout: %w", err)
+	}
 
-	// /workspace: bind mount the host workspace directory.
-	args = append(args, "--mount", fmt.Sprintf("type=bind,source=%s,target=/workspace", workspace))
+	// Ensure named volumes exist before launching.
+	if err := mounts.EnsureVolumes(m.RuntimePath, mountLayout); err != nil {
+		return fmt.Errorf("ensuring volumes: %w", err)
+	}
 
-	// /home/dev: named volume for user config persistence.
-	args = append(args, "--mount", fmt.Sprintf("type=volume,source=aibox-home-%s,target=/home/dev", sanitize(currentUsername())))
-
-	// /opt/toolpacks: named volume for runtime-installed tools.
-	args = append(args, "--mount", "type=volume,source=aibox-toolpacks,target=/opt/toolpacks")
-
-	// /tmp: tmpfs (ephemeral).
-	args = append(args, "--tmpfs", fmt.Sprintf("/tmp:rw,noexec,nosuid,size=%s", tmpSize))
-
-	// /var/tmp: tmpfs (ephemeral).
-	args = append(args, "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=1g")
+	args = append(args, mounts.RuntimeArgs(mountLayout)...)
 
 	// Image and default command.
 	// The container needs a long-running process to stay alive for shell access.
@@ -168,6 +201,13 @@ func (m *Manager) Start(opts StartOpts) error {
 
 	slog.Debug("starting container", "name", name, "image", image, "runtime", m.RuntimeName)
 	slog.Debug("container run args", "args", args)
+
+	// Final safety gate: validate that all mandatory security flags are present.
+	expectGVisor := m.Cfg.GVisor.Enabled
+	expectAppArmor := security.IsAppArmorAvailable()
+	if err := security.ValidateArgsWithExpectations(args, expectGVisor, expectAppArmor); err != nil {
+		return fmt.Errorf("pre-launch security validation failed: %w", err)
+	}
 
 	cmd := exec.Command(m.RuntimePath, args...)
 	var stderr bytes.Buffer
@@ -189,7 +229,13 @@ func (m *Manager) Start(opts StartOpts) error {
 	if m.Cfg.GVisor.Enabled {
 		fmt.Printf("  Runtime:   gVisor (runsc, %s)\n", m.Cfg.GVisor.Platform)
 	}
-	fmt.Printf("  Network:   none (Phase 1)\n")
+	if m.Cfg.Network.Enabled {
+		fmt.Printf("  Network:   proxy-controlled (Squid %s:%d, CoreDNS %s:%d)\n",
+			m.Cfg.Network.ProxyAddr, m.Cfg.Network.ProxyPort,
+			m.Cfg.Network.DNSAddr, m.Cfg.Network.DNSPort)
+	} else {
+		fmt.Printf("  Network:   none (isolated)\n")
+	}
 	fmt.Printf("\nRun 'aibox shell' to open a terminal in the sandbox.\n")
 
 	return nil
@@ -287,7 +333,9 @@ func (m *Manager) Status() (*StatusInfo, error) {
 
 // ensureImage pulls the image if it's not available locally.
 func (m *Manager) ensureImage(image string) error {
-	if err := m.runQuiet("image", "exists", image); err == nil {
+	// Use "image inspect" which works with both podman and docker,
+	// unlike "image exists" which is podman-only.
+	if err := m.runQuiet("image", "inspect", image); err == nil {
 		slog.Debug("image already cached", "image", image)
 		return nil
 	}

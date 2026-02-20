@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/aibox/aibox/internal/config"
+	"github.com/aibox/aibox/internal/network"
 	"github.com/aibox/aibox/internal/security"
 )
 
@@ -27,6 +28,15 @@ func LinuxSetup(cfg *config.Config) error {
 		{"Load AppArmor profile", func() error { return loadAppArmor() }},
 		{"Create default configuration", func() error { return createDefaultConfig() }},
 		{"Pull base image", func() error { return pullBaseImage(cfg) }},
+	}
+
+	// Phase 2: Network security steps.
+	if cfg.Network.Enabled {
+		steps = append(steps,
+			Step{"Install nftables rules", func() error { return installNFTables(cfg) }},
+			Step{"Configure Squid proxy", func() error { return configureSquid(cfg) }},
+			Step{"Configure CoreDNS", func() error { return configureCoreDNS(cfg) }},
+		)
 	}
 
 	fmt.Println("AI-Box setup (Linux)")
@@ -266,6 +276,148 @@ func findAppArmorSource() string {
 		}
 	}
 	return ""
+}
+
+// installNFTables generates and applies the nftables ruleset for container
+// network isolation. Rules restrict container egress to the proxy and DNS only.
+func installNFTables(cfg *config.Config) error {
+	nftCfg := network.NFTablesConfig{
+		ProxyIP:   cfg.Network.ProxyAddr,
+		ProxyPort: cfg.Network.ProxyPort,
+		DNSIP:     cfg.Network.DNSAddr,
+		DNSPort:   cfg.Network.DNSPort,
+	}
+	mgr := network.NewNFTablesManager(nftCfg)
+
+	// Write config to /etc/aibox/nftables.conf.
+	configPath := "/etc/aibox/nftables.conf"
+	if err := mgr.WriteConfig(configPath); err != nil {
+		// Try with sudo.
+		slog.Debug("direct write failed, trying sudo", "error", err)
+		ruleset := mgr.GenerateRuleset()
+		tmpFile := "/tmp/aibox-nftables.conf"
+		if err := os.WriteFile(tmpFile, []byte(ruleset), 0o644); err != nil {
+			return fmt.Errorf("writing temp nftables config: %w", err)
+		}
+		if err := exec.Command("sudo", "cp", tmpFile, configPath).Run(); err != nil {
+			return fmt.Errorf("installing nftables config: %w (try running with sudo)", err)
+		}
+		os.Remove(tmpFile)
+	}
+	fmt.Printf("  nftables config written to %s\n", configPath)
+
+	// Apply the ruleset.
+	if err := mgr.Apply(); err != nil {
+		// Try with sudo.
+		slog.Debug("direct apply failed, trying sudo", "error", err)
+		if err := exec.Command("sudo", "nft", "-f", configPath).Run(); err != nil {
+			fmt.Printf("  WARN: could not apply nftables rules: %v\n", err)
+			fmt.Println("  Apply manually: sudo nft -f /etc/aibox/nftables.conf")
+			return nil
+		}
+	}
+	fmt.Println("  nftables rules applied")
+	return nil
+}
+
+// configureSquid generates the Squid proxy configuration and starts the service.
+func configureSquid(cfg *config.Config) error {
+	squidCfg := network.SquidConfig{
+		ListenAddr:     cfg.Network.ProxyAddr,
+		ListenPort:     cfg.Network.ProxyPort,
+		AllowedDomains: cfg.Network.AllowedDomains,
+	}
+	mgr := network.NewSquidManager(squidCfg)
+
+	// Write config.
+	configPath := "/etc/aibox/squid.conf"
+	if err := mgr.WriteConfig(configPath); err != nil {
+		slog.Debug("direct write failed, trying sudo", "error", err)
+		config := mgr.GenerateConfig()
+		tmpFile := "/tmp/aibox-squid.conf"
+		if err := os.WriteFile(tmpFile, []byte(config), 0o644); err != nil {
+			return fmt.Errorf("writing temp squid config: %w", err)
+		}
+		if err := exec.Command("sudo", "cp", tmpFile, configPath).Run(); err != nil {
+			return fmt.Errorf("installing squid config: %w (try running with sudo)", err)
+		}
+		os.Remove(tmpFile)
+	}
+	fmt.Printf("  Squid config written to %s\n", configPath)
+
+	// Check if Squid is installed.
+	if _, err := exec.LookPath("squid"); err != nil {
+		fmt.Println("  WARN: squid not found in PATH")
+		fmt.Println("  Install it: sudo apt-get install -y squid")
+		return nil
+	}
+
+	// Check if already running.
+	if mgr.IsRunning() {
+		fmt.Println("  Squid proxy already running, reloading config")
+		if err := mgr.Reload(); err != nil {
+			fmt.Printf("  WARN: reload failed: %v\n", err)
+		}
+		return nil
+	}
+
+	// Start Squid.
+	if err := mgr.Start(); err != nil {
+		fmt.Printf("  WARN: could not start Squid: %v\n", err)
+		fmt.Println("  Start manually: sudo systemctl start squid")
+	} else {
+		fmt.Println("  Squid proxy started")
+	}
+	return nil
+}
+
+// configureCoreDNS generates the CoreDNS Corefile and starts the service.
+func configureCoreDNS(cfg *config.Config) error {
+	entries := network.DefaultDomainEntries()
+	dnsCfg := network.CoreDNSConfig{
+		ListenAddr: cfg.Network.DNSAddr,
+		ListenPort: cfg.Network.DNSPort,
+		Entries:    entries,
+	}
+	mgr := network.NewCoreDNSManager(dnsCfg)
+
+	// Write Corefile.
+	configPath := "/etc/aibox/Corefile"
+	if err := mgr.WriteCorefile(configPath); err != nil {
+		slog.Debug("direct write failed, trying sudo", "error", err)
+		corefile := mgr.GenerateCorefile()
+		tmpFile := "/tmp/aibox-Corefile"
+		if err := os.WriteFile(tmpFile, []byte(corefile), 0o644); err != nil {
+			return fmt.Errorf("writing temp Corefile: %w", err)
+		}
+		if err := exec.Command("sudo", "cp", tmpFile, configPath).Run(); err != nil {
+			return fmt.Errorf("installing Corefile: %w (try running with sudo)", err)
+		}
+		os.Remove(tmpFile)
+	}
+	fmt.Printf("  CoreDNS Corefile written to %s\n", configPath)
+
+	// Check if CoreDNS is installed.
+	if _, err := exec.LookPath("coredns"); err != nil {
+		fmt.Println("  WARN: coredns not found in PATH")
+		fmt.Println("  Install it: see https://coredns.io/manual/toc/#installation")
+		return nil
+	}
+
+	// Check if already running.
+	if mgr.IsRunning() {
+		fmt.Println("  CoreDNS already running")
+		return nil
+	}
+
+	// Start CoreDNS.
+	if err := mgr.Start(); err != nil {
+		fmt.Printf("  WARN: could not start CoreDNS: %v\n", err)
+		fmt.Println("  Start manually: sudo coredns -conf /etc/aibox/Corefile &")
+	} else {
+		fmt.Println("  CoreDNS started")
+	}
+	return nil
 }
 
 func firstLine(s string) string {

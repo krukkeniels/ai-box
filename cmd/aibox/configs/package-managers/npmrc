@@ -1,0 +1,7 @@
+# AI-Box npm configuration
+# Routes all npm traffic through Nexus mirror
+# Direct access to registry.npmjs.org is blocked by network policy
+
+registry=https://nexus.internal/repository/npm-proxy/
+strict-ssl=true
+//nexus.internal/repository/npm-proxy/:always-auth=false

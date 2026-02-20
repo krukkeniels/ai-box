@@ -17,6 +17,7 @@ type Config struct {
 	Resources ResourceConfig  `yaml:"resources" mapstructure:"resources"`
 	Workspace WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Registry  RegistryConfig  `yaml:"registry" mapstructure:"registry"`
+	Network   NetworkConfig   `yaml:"network" mapstructure:"network"`
 	Logging   LoggingConfig   `yaml:"logging" mapstructure:"logging"`
 }
 
@@ -45,6 +46,17 @@ type RegistryConfig struct {
 	VerifySignatures bool   `yaml:"verify_signatures" mapstructure:"verify_signatures"`
 }
 
+// NetworkConfig holds network security settings (Phase 2).
+type NetworkConfig struct {
+	Enabled        bool     `yaml:"enabled" mapstructure:"enabled"`
+	ProxyAddr      string   `yaml:"proxy_addr" mapstructure:"proxy_addr"`           // Squid proxy address (default "127.0.0.1")
+	ProxyPort      int      `yaml:"proxy_port" mapstructure:"proxy_port"`           // Squid proxy port (default 3128)
+	DNSAddr        string   `yaml:"dns_addr" mapstructure:"dns_addr"`               // CoreDNS address (default "127.0.0.1")
+	DNSPort        int      `yaml:"dns_port" mapstructure:"dns_port"`               // CoreDNS port (default 53)
+	AllowedDomains []string `yaml:"allowed_domains" mapstructure:"allowed_domains"` // domains allowed through proxy
+	LLMGateway     string   `yaml:"llm_gateway" mapstructure:"llm_gateway"`         // LLM API gateway (default "foundry.internal")
+}
+
 // LoggingConfig holds logging preferences.
 type LoggingConfig struct {
 	Format string `yaml:"format" mapstructure:"format"` // text or json
@@ -64,6 +76,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workspace.validate_fs", true)
 	v.SetDefault("registry.url", "harbor.internal")
 	v.SetDefault("registry.verify_signatures", true)
+	v.SetDefault("network.enabled", true)
+	v.SetDefault("network.proxy_addr", "127.0.0.1")
+	v.SetDefault("network.proxy_port", 3128)
+	v.SetDefault("network.dns_addr", "127.0.0.1")
+	v.SetDefault("network.dns_port", 53)
+	v.SetDefault("network.allowed_domains", []string{
+		"harbor.internal",
+		"nexus.internal",
+		"foundry.internal",
+		"git.internal",
+	})
+	v.SetDefault("network.llm_gateway", "foundry.internal")
 	v.SetDefault("logging.format", "text")
 	v.SetDefault("logging.level", "info")
 }
@@ -84,6 +108,12 @@ func bindEnvVars(v *viper.Viper) {
 		"workspace.validate_fs":    "AIBOX_WORKSPACE_VALIDATE_FS",
 		"registry.url":             "AIBOX_REGISTRY_URL",
 		"registry.verify_signatures": "AIBOX_REGISTRY_VERIFY_SIGNATURES",
+		"network.enabled":          "AIBOX_NETWORK_ENABLED",
+		"network.proxy_addr":       "AIBOX_NETWORK_PROXY_ADDR",
+		"network.proxy_port":       "AIBOX_NETWORK_PROXY_PORT",
+		"network.dns_addr":         "AIBOX_NETWORK_DNS_ADDR",
+		"network.dns_port":         "AIBOX_NETWORK_DNS_PORT",
+		"network.llm_gateway":      "AIBOX_NETWORK_LLM_GATEWAY",
 		"logging.format":           "AIBOX_LOGGING_FORMAT",
 		"logging.level":            "AIBOX_LOGGING_LEVEL",
 	}
@@ -199,6 +229,19 @@ workspace:
 registry:
   url: harbor.internal
   verify_signatures: true
+
+network:
+  enabled: true
+  proxy_addr: "127.0.0.1"   # Squid proxy listen address
+  proxy_port: 3128           # Squid proxy port
+  dns_addr: "127.0.0.1"     # CoreDNS listen address
+  dns_port: 53               # CoreDNS port
+  allowed_domains:           # domains containers can reach
+    - harbor.internal
+    - nexus.internal
+    - foundry.internal
+    - git.internal
+  llm_gateway: foundry.internal
 
 logging:
   format: text         # text or json

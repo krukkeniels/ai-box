@@ -1,0 +1,65 @@
+# AI-Box CoreDNS Configuration
+#
+# This Corefile enforces DNS-level network isolation for AI-Box sandboxes.
+# Only explicitly allowlisted internal domains resolve; everything else
+# returns NXDOMAIN, preventing sandbox code from contacting external hosts.
+#
+# DNS tunneling is mitigated by blocking TXT and NULL record types for
+# non-allowlisted domains.
+#
+# Managed by: aibox network setup
+# Spec reference: SPEC-FINAL.md Section 6 (Network Security)
+
+.:dns://127.0.0.1:53 {
+    # Health check endpoint for liveness probes.
+    # Returns 200 OK when CoreDNS is running.
+    health 127.0.0.1:8080
+
+    # Readiness probe endpoint.
+    # Returns 200 OK once all plugins are loaded and ready.
+    ready 127.0.0.1:8181
+
+    # Prometheus metrics endpoint for monitoring DNS query patterns.
+    prometheus 127.0.0.1:9153
+
+    # Log all DNS queries for audit trail.
+    log
+
+    # Log errors for diagnostics.
+    errors
+
+    # Allowlisted internal domains.
+    # These are the only domains sandbox containers can resolve.
+    # Each entry maps an internal service to its IP address.
+    hosts {
+        # Container registry (Harbor) - pulls base images and toolpacks.
+        10.0.0.10 harbor.internal
+        # Package mirror (Nexus) - npm, PyPI, apt, cargo mirrors.
+        10.0.0.11 nexus.internal
+        # LLM gateway (Foundry) - proxied access to AI model APIs.
+        10.0.0.12 foundry.internal
+        # Git server - code push/pull for sandboxed repositories.
+        10.0.0.13 git.internal
+        # Pass unmatched queries to the next plugin (template catch-all).
+        fallthrough
+    }
+
+    # Block TXT record queries for non-allowlisted domains.
+    # TXT records are commonly abused for DNS tunneling / data exfiltration.
+    # Allowlisted domains still pass through the hosts plugin above.
+    template IN TXT . {
+        rcode NXDOMAIN
+    }
+
+    # Block NULL record queries for non-allowlisted domains.
+    # NULL records can carry arbitrary binary data for tunneling.
+    template IN NULL . {
+        rcode NXDOMAIN
+    }
+
+    # Catch-all: return NXDOMAIN for any query not matched above.
+    # This ensures that only explicitly allowlisted domains can be resolved.
+    template IN ANY . {
+        rcode NXDOMAIN
+    }
+}

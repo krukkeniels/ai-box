@@ -3,15 +3,18 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/aibox/aibox/internal/config"
 	"github.com/aibox/aibox/internal/host"
+	"github.com/aibox/aibox/internal/network"
 	"github.com/aibox/aibox/internal/security"
 )
 
@@ -52,12 +55,22 @@ func RunAll(cfg *config.Config) *Report {
 	hostInfo := host.Detect()
 
 	checks := []func() CheckResult{
-		func() CheckResult { return CheckPodman(cfg.Runtime) },
+		func() CheckResult { return CheckContainerRuntime(cfg.Runtime) },
+		func() CheckResult { return CheckRootless(cfg.Runtime) },
 		func() CheckResult { return CheckGVisor(cfg) },
 		func() CheckResult { return CheckAppArmor() },
 		func() CheckResult { return CheckSeccomp() },
 		func() CheckResult { return CheckImage(cfg) },
 		func() CheckResult { return CheckDiskSpace() },
+	}
+
+	// Network security checks (Phase 2).
+	if cfg.Network.Enabled {
+		checks = append(checks,
+			func() CheckResult { return CheckNFTables() },
+			func() CheckResult { return CheckSquidProxy(cfg) },
+			func() CheckResult { return CheckCoreDNS(cfg) },
+		)
 	}
 
 	// WSL2-specific check.
@@ -73,50 +86,126 @@ func RunAll(cfg *config.Config) *Report {
 	return report
 }
 
-// CheckPodman verifies the container runtime is installed and accessible.
-func CheckPodman(runtime string) CheckResult {
+// CheckContainerRuntime verifies that a container runtime is installed and accessible.
+// It checks the configured runtime first, then falls back to alternatives.
+func CheckContainerRuntime(runtime string) CheckResult {
 	result := CheckResult{Name: "Container Runtime"}
 
-	path, err := exec.LookPath(runtime)
-	if err != nil {
-		result.Status = "fail"
-		result.Message = fmt.Sprintf("%s not found in PATH", runtime)
-		if runtime == "podman" {
-			result.Remediation = "Install Podman: https://podman.io/docs/installation\n" +
-				"  Ubuntu/Debian: sudo apt-get install -y podman\n" +
-				"  Fedora: sudo dnf install -y podman"
+	// Try the configured runtime first, then fall back to alternatives.
+	candidates := []string{runtime}
+	for _, alt := range []string{"podman", "docker"} {
+		if alt != runtime {
+			candidates = append(candidates, alt)
+		}
+	}
+
+	for _, rt := range candidates {
+		path, err := exec.LookPath(rt)
+		if err != nil {
+			continue
+		}
+
+		// Check version.
+		out, err := exec.Command(path, "--version").Output()
+		if err != nil {
+			result.Status = "fail"
+			result.Message = fmt.Sprintf("%s found at %s but failed to get version: %v", rt, path, err)
+			result.Remediation = fmt.Sprintf("Check that %s is correctly installed and functional", rt)
+			return result
+		}
+
+		version := strings.TrimSpace(string(out))
+
+		// Verify it can actually run (not just installed).
+		// Docker uses a different info format than podman.
+		var infoCmd *exec.Cmd
+		if rt == "docker" {
+			infoCmd = exec.Command(path, "info", "--format", "{{.OSType}}")
 		} else {
-			result.Remediation = "Install Docker (rootless): https://docs.docker.com/engine/install/"
+			infoCmd = exec.Command(path, "info", "--format", "{{.Host.OS}}")
+		}
+		if err := infoCmd.Run(); err != nil {
+			result.Status = "warn"
+			result.Message = fmt.Sprintf("%s installed (%s) but 'info' command failed -- service may not be running", rt, version)
+			if rt == "podman" {
+				result.Remediation = "Podman is daemonless and should work without a service.\n" +
+					"  Try running: podman info"
+			} else {
+				result.Remediation = "Ensure Docker daemon is running: sudo systemctl start docker"
+			}
+			return result
+		}
+
+		result.Status = "pass"
+		if rt != runtime {
+			result.Message = fmt.Sprintf("%s: %s (configured runtime %q not found, using %s as fallback)", rt, version, runtime, rt)
+		} else {
+			result.Message = fmt.Sprintf("%s: %s", rt, version)
 		}
 		return result
 	}
 
-	// Check version.
-	out, err := exec.Command(path, "--version").Output()
-	if err != nil {
-		result.Status = "fail"
-		result.Message = fmt.Sprintf("%s found at %s but failed to get version: %v", runtime, path, err)
-		result.Remediation = fmt.Sprintf("Check that %s is correctly installed and functional", runtime)
-		return result
-	}
+	// No runtime found at all.
+	result.Status = "fail"
+	result.Message = "no container runtime found (tried: " + strings.Join(candidates, ", ") + ")"
+	result.Remediation = "Install Podman: https://podman.io/docs/installation\n" +
+		"  Ubuntu/Debian: sudo apt-get install -y podman\n" +
+		"  Fedora: sudo dnf install -y podman\n" +
+		"  Or install Docker: https://docs.docker.com/engine/install/"
+	return result
+}
 
-	version := strings.TrimSpace(string(out))
+// CheckRootless verifies that the container runtime is running in rootless mode.
+func CheckRootless(runtime string) CheckResult {
+	result := CheckResult{Name: "Rootless Mode"}
 
-	// Verify it can actually run (not just installed).
-	if err := exec.Command(path, "info", "--format", "{{.Host.OS}}").Run(); err != nil {
+	rt := findRuntime(runtime)
+	if rt == "" {
 		result.Status = "warn"
-		result.Message = fmt.Sprintf("%s installed (%s) but 'info' command failed -- service may not be running", runtime, version)
-		if runtime == "podman" {
-			result.Remediation = "Podman is daemonless and should work without a service.\n" +
-				"  Try running: podman info"
+		result.Message = "cannot check rootless mode: no container runtime found"
+		return result
+	}
+
+	rtName := filepath.Base(rt)
+
+	if rtName == "podman" {
+		out, err := exec.Command(rt, "info", "--format", "{{.Host.Security.Rootless}}").Output()
+		if err != nil {
+			result.Status = "warn"
+			result.Message = fmt.Sprintf("could not query podman rootless status: %v", err)
+			return result
+		}
+		val := strings.TrimSpace(string(out))
+		if val == "true" {
+			result.Status = "pass"
+			result.Message = "podman is running in rootless mode"
 		} else {
-			result.Remediation = "Ensure Docker daemon is running: sudo systemctl start docker"
+			result.Status = "fail"
+			result.Message = "podman is NOT running in rootless mode"
+			result.Remediation = "Run podman as a non-root user. Avoid running with sudo.\n" +
+				"  See: https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md"
 		}
 		return result
 	}
 
-	result.Status = "pass"
-	result.Message = fmt.Sprintf("%s: %s", runtime, version)
+	// Docker: check if the dockerd socket is owned by the current user
+	// or if using rootless docker.
+	out, err := exec.Command(rt, "info", "--format", "{{.SecurityOptions}}").Output()
+	if err != nil {
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("could not query docker info: %v", err)
+		return result
+	}
+	info := string(out)
+	if strings.Contains(info, "rootless") {
+		result.Status = "pass"
+		result.Message = "docker is running in rootless mode"
+	} else {
+		result.Status = "fail"
+		result.Message = "docker is NOT running in rootless mode"
+		result.Remediation = "Configure Docker rootless mode:\n" +
+			"  https://docs.docker.com/engine/security/rootless/"
+	}
 	return result
 }
 
@@ -145,9 +234,9 @@ func CheckGVisor(cfg *config.Config) CheckResult {
 	}
 
 	if runscPath == "" {
-		result.Status = "fail"
-		result.Message = "runsc (gVisor) binary not found"
-		result.Remediation = "Install gVisor:\n" +
+		result.Status = "warn"
+		result.Message = "runsc (gVisor) binary not found -- sandbox will use seccomp-only isolation"
+		result.Remediation = "Install gVisor for stronger isolation:\n" +
 			"  curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg\n" +
 			"  echo 'deb [signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main' | sudo tee /etc/apt/sources.list.d/gvisor.list\n" +
 			"  sudo apt-get update && sudo apt-get install -y runsc"
@@ -163,8 +252,8 @@ func CheckGVisor(cfg *config.Config) CheckResult {
 	}
 	version := strings.TrimSpace(string(out))
 
-	// Check if runtime is registered with podman.
-	rtPath, _ := exec.LookPath(cfg.Runtime)
+	// Check if runtime is registered with the container runtime.
+	rtPath := findRuntime(cfg.Runtime)
 	if rtPath != "" {
 		infoOut, err := exec.Command(rtPath, "info", "--format", "json").Output()
 		if err == nil && strings.Contains(string(infoOut), "runsc") {
@@ -263,22 +352,25 @@ func CheckSeccomp() CheckResult {
 func CheckImage(cfg *config.Config) CheckResult {
 	result := CheckResult{Name: "Container Image"}
 
-	rtPath, err := exec.LookPath(cfg.Runtime)
-	if err != nil {
+	// Find a working runtime (try configured, then fallback).
+	rt := findRuntime(cfg.Runtime)
+	if rt == "" {
 		result.Status = "warn"
-		result.Message = "cannot check image: container runtime not found"
+		result.Message = "cannot check image: no container runtime found"
 		return result
 	}
 
-	if err := exec.Command(rtPath, "image", "exists", cfg.Image).Run(); err != nil {
+	// Check if image exists locally. Docker doesn't have 'image exists',
+	// so we use 'image inspect' which works for both docker and podman.
+	if err := exec.Command(rt, "image", "inspect", cfg.Image).Run(); err != nil {
 		result.Status = "warn"
 		result.Message = fmt.Sprintf("image %s not cached locally", cfg.Image)
-		result.Remediation = fmt.Sprintf("Pull the image:\n  %s pull %s\n  Or run: aibox update", cfg.Runtime, cfg.Image)
+		result.Remediation = fmt.Sprintf("Pull the image:\n  %s pull %s\n  Or run: aibox update", filepath.Base(rt), cfg.Image)
 		return result
 	}
 
 	// Check image age.
-	out, err := exec.Command(rtPath, "image", "inspect", "--format", "{{.Created}}", cfg.Image).Output()
+	out, err := exec.Command(rt, "image", "inspect", "--format", "{{.Created}}", cfg.Image).Output()
 	if err == nil {
 		created := strings.TrimSpace(string(out))
 		result.Status = "pass"
@@ -289,6 +381,22 @@ func CheckImage(cfg *config.Config) CheckResult {
 	}
 
 	return result
+}
+
+// findRuntime returns the path of the first available container runtime.
+func findRuntime(preferred string) string {
+	candidates := []string{preferred}
+	for _, alt := range []string{"podman", "docker"} {
+		if alt != preferred {
+			candidates = append(candidates, alt)
+		}
+	}
+	for _, rt := range candidates {
+		if p, err := exec.LookPath(rt); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 // CheckDiskSpace verifies sufficient disk space for aibox operations.
@@ -403,6 +511,71 @@ func getAvailableMemoryGB() int {
 		}
 	}
 	return 0
+}
+
+// CheckNFTables verifies that the aibox nftables rules are active on the host.
+func CheckNFTables() CheckResult {
+	result := CheckResult{Name: "nftables Rules"}
+
+	mgr := network.NewNFTablesManager(network.DefaultNFTablesConfig())
+	if !mgr.IsActive() {
+		result.Status = "fail"
+		result.Message = "nftables table 'inet aibox' not found"
+		result.Remediation = "Run 'aibox setup' to install nftables rules.\n" +
+			"  Or manually: sudo nft -f /etc/aibox/nftables.conf"
+		return result
+	}
+
+	if err := mgr.Verify(); err != nil {
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("nftables table exists but verification incomplete: %v", err)
+		result.Remediation = "Run 'aibox setup' to reinstall nftables rules"
+		return result
+	}
+
+	result.Status = "pass"
+	result.Message = "nftables rules active (table inet aibox)"
+	return result
+}
+
+// CheckSquidProxy verifies that the Squid proxy is running and reachable.
+func CheckSquidProxy(cfg *config.Config) CheckResult {
+	result := CheckResult{Name: "Squid Proxy"}
+
+	addr := fmt.Sprintf("%s:%d", cfg.Network.ProxyAddr, cfg.Network.ProxyPort)
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		result.Status = "fail"
+		result.Message = fmt.Sprintf("Squid proxy not reachable at %s", addr)
+		result.Remediation = "Run 'aibox setup' to start Squid proxy.\n" +
+			"  Or check: sudo systemctl status squid"
+		return result
+	}
+	conn.Close()
+
+	result.Status = "pass"
+	result.Message = fmt.Sprintf("Squid proxy listening at %s", addr)
+	return result
+}
+
+// CheckCoreDNS verifies that CoreDNS is running and resolving allowlisted domains.
+func CheckCoreDNS(cfg *config.Config) CheckResult {
+	result := CheckResult{Name: "CoreDNS Resolver"}
+
+	addr := fmt.Sprintf("%s:%d", cfg.Network.DNSAddr, cfg.Network.DNSPort)
+	conn, err := net.DialTimeout("udp", addr, 3*time.Second)
+	if err != nil {
+		result.Status = "fail"
+		result.Message = fmt.Sprintf("CoreDNS not reachable at %s", addr)
+		result.Remediation = "Run 'aibox setup' to start CoreDNS.\n" +
+			"  Or check: sudo systemctl status coredns"
+		return result
+	}
+	conn.Close()
+
+	result.Status = "pass"
+	result.Message = fmt.Sprintf("CoreDNS listening at %s", addr)
+	return result
 }
 
 func firstLine(s string) string {
