@@ -53,19 +53,6 @@ func TestSeccompProfile_Valid(t *testing.T) {
 		}
 	}
 
-	// Verify blocked syscalls are NOT present.
-	blocked := []string{
-		"ptrace", "mount", "umount2", "pivot_root", "chroot",
-		"bpf", "userfaultfd", "unshare", "setns",
-		"init_module", "finit_module", "kexec_load",
-		"keyctl", "add_key",
-	}
-	for _, sc := range blocked {
-		if allowed[sc] {
-			t.Errorf("blocked syscall %q found in allowlist", sc)
-		}
-	}
-
 	// Verify critical allowed syscalls are present.
 	required := []string{
 		"read", "write", "open", "openat", "close", "mmap", "mprotect",
@@ -78,7 +65,7 @@ func TestSeccompProfile_Valid(t *testing.T) {
 		}
 	}
 
-	t.Logf("seccomp profile: %d syscalls allowed, %d blocked by default-deny", len(allowed), len(blocked))
+	t.Logf("seccomp profile: %d syscalls allowed", len(allowed))
 }
 
 func TestSeccompProfile_Architectures(t *testing.T) {
@@ -108,6 +95,63 @@ func TestSeccompProfile_Architectures(t *testing.T) {
 	}
 }
 
+// TestSeccompProfile_BlockedSyscalls verifies that the 14 spec-mandated
+// dangerous syscalls (SPEC Section 9.2) are NOT in the seccomp allowlist.
+// A regression adding any of these syscalls would weaken sandbox isolation.
+func TestSeccompProfile_BlockedSyscalls(t *testing.T) {
+	profilePath := "../configs/seccomp.json"
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatalf("reading seccomp profile: %v", err)
+	}
+
+	var profile struct {
+		Syscalls []struct {
+			Names  []string `json:"names"`
+			Action string   `json:"action"`
+		} `json:"syscalls"`
+	}
+	if err := json.Unmarshal(data, &profile); err != nil {
+		t.Fatalf("parsing seccomp profile: %v", err)
+	}
+
+	// Collect all allowed syscalls.
+	allowed := make(map[string]bool)
+	for _, group := range profile.Syscalls {
+		if group.Action == "SCMP_ACT_ALLOW" {
+			for _, name := range group.Names {
+				allowed[name] = true
+			}
+		}
+	}
+
+	// These 14 syscalls MUST be blocked (not in the allowlist).
+	blocked := []string{
+		"ptrace",       // process tracing / debugging escape
+		"mount",        // filesystem mount
+		"umount2",      // filesystem unmount
+		"pivot_root",   // change root filesystem
+		"chroot",       // change root directory
+		"bpf",          // eBPF program loading
+		"userfaultfd",  // userfault handling (sandbox escape vector)
+		"unshare",      // namespace creation
+		"setns",        // namespace joining
+		"init_module",  // kernel module loading
+		"finit_module", // kernel module loading from fd
+		"kexec_load",   // load new kernel
+		"keyctl",       // kernel keyring manipulation
+		"add_key",      // add key to kernel keyring
+	}
+
+	for _, sc := range blocked {
+		t.Run(sc, func(t *testing.T) {
+			if allowed[sc] {
+				t.Errorf("dangerous syscall %q must not be in the seccomp allowlist", sc)
+			}
+		})
+	}
+}
+
 func TestAppArmorProfile_Exists(t *testing.T) {
 	profilePath := "../configs/apparmor/aibox-sandbox"
 	data, err := os.ReadFile(profilePath)
@@ -127,7 +171,7 @@ func TestAppArmorProfile_Exists(t *testing.T) {
 		"deny /home/**",
 		"deny /root/**",
 		"deny /**/.ssh/**",
-		"deny /var/run/docker.sock",
+		"deny /**/docker.sock rw,",
 		"deny /proc/*/mem",
 		"deny /proc/kcore",
 		"deny /sys/firmware/**",

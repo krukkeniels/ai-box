@@ -2,7 +2,9 @@ package mounts
 
 import (
 	"fmt"
+	"os"
 	"os/user"
+	"strings"
 )
 
 // Mount describes a single container mount point.
@@ -95,7 +97,8 @@ func RuntimeArgs(mounts []Mount) []string {
 		case "volume":
 			args = append(args, "--mount", fmt.Sprintf("type=volume,source=%s,target=%s,%s", m.Source, m.Target, m.Options))
 		case "tmpfs":
-			args = append(args, "--mount", fmt.Sprintf("type=tmpfs,target=%s,tmpfs-mode=1777,%s", m.Target, m.Options))
+			opts := strings.Replace(m.Options, "size=", "tmpfs-size=", 1)
+			args = append(args, "--mount", fmt.Sprintf("type=tmpfs,target=%s,tmpfs-mode=1777,%s", m.Target, opts))
 		}
 	}
 	return args
@@ -104,6 +107,12 @@ func RuntimeArgs(mounts []Mount) []string {
 // volumePrefix returns the naming prefix for aibox volumes:
 // aibox-<username>.
 func volumePrefix() (string, error) {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		u, err := user.Lookup(sudoUser)
+		if err == nil {
+			return "aibox-" + u.Username, nil
+		}
+	}
 	u, err := user.Current()
 	if err != nil {
 		return "", err

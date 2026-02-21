@@ -22,7 +22,7 @@ func TestDefaultCoreDNSConfig(t *testing.T) {
 func TestDefaultDomainEntries_HasRequiredDomains(t *testing.T) {
 	entries := DefaultDomainEntries()
 
-	required := []string{"harbor.internal", "nexus.internal", "foundry.internal", "git.internal"}
+	required := []string{"harbor.internal", "nexus.internal", "foundry.internal", "git.internal", "vault.internal"}
 	domains := make(map[string]bool)
 	for _, e := range entries {
 		domains[e.Domain] = true

@@ -17,10 +17,11 @@ import (
 
 // StartOpts holds the options for starting a container.
 type StartOpts struct {
-	Workspace string
-	Image     string
-	CPUs      int
-	Memory    string
+	Workspace   string
+	Image       string
+	CPUs        int
+	Memory      string
+	CredEnvVars []string // credential environment variables injected by the credential broker
 }
 
 // StatusInfo holds the current state of an aibox container.
@@ -126,20 +127,29 @@ func (m *Manager) Start(opts StartOpts) error {
 	// Seccomp profile (mandatory — refuse to launch without it).
 	seccompPath := m.findSeccompProfile()
 	if seccompPath == "" {
-		return fmt.Errorf("seccomp profile not found; refusing to launch without seccomp enforcement.\n" +
-			"Install it: sudo mkdir -p /etc/aibox && sudo cp configs/seccomp.json /etc/aibox/seccomp.json")
+		return fmt.Errorf("seccomp profile not found; run 'aibox setup' to install it")
 	}
 	args = append(args, fmt.Sprintf("--security-opt=seccomp=%s", seccompPath))
 
 	// AppArmor profile enforcement.
+	// When RequireAppArmor is false (default) and gVisor + seccomp are active,
+	// AppArmor failures degrade gracefully to a warning instead of blocking launch.
 	if security.IsAppArmorAvailable() {
-		if !m.isAppArmorProfileLoaded() {
-			return fmt.Errorf("AppArmor is available but aibox-sandbox profile is not loaded; refusing to launch.\n" +
-				"Load it: sudo apparmor_parser -r configs/apparmor/aibox-sandbox")
+		profilePath := m.findAppArmorProfile()
+		if err := security.EnsureProfile(profilePath); err != nil {
+			if m.Cfg.GVisor.RequireAppArmor {
+				return fmt.Errorf("AppArmor profile not loaded; run 'aibox setup' to configure it: %w", err)
+			}
+			slog.Warn("AppArmor profile not loaded; continuing with gVisor + seccomp isolation",
+				"error", err)
+		} else {
+			args = append(args, "--security-opt=apparmor=aibox-sandbox")
 		}
-		args = append(args, "--security-opt=apparmor=aibox-sandbox")
 	} else {
-		slog.Warn("AppArmor kernel module not available; skipping AppArmor enforcement (reduced isolation)")
+		if m.Cfg.GVisor.RequireAppArmor {
+			return fmt.Errorf("AppArmor is required (gvisor.require_apparmor=true) but not available on this system")
+		}
+		slog.Warn("AppArmor not available; continuing with gVisor + seccomp isolation")
 	}
 
 	// Read-only root filesystem.
@@ -177,6 +187,11 @@ func (m *Manager) Start(opts StartOpts) error {
 		args = append(args, "--network=none")
 	}
 
+	// Credential environment variables (Phase 3).
+	for _, env := range opts.CredEnvVars {
+		args = append(args, "-e", env)
+	}
+
 	// Resource limits.
 	args = append(args, fmt.Sprintf("--cpus=%s", strconv.Itoa(cpus)))
 	args = append(args, fmt.Sprintf("--memory=%s", memory))
@@ -203,8 +218,9 @@ func (m *Manager) Start(opts StartOpts) error {
 	slog.Debug("container run args", "args", args)
 
 	// Final safety gate: validate that all mandatory security flags are present.
+	// Only expect AppArmor in the validation if it was required and available.
 	expectGVisor := m.Cfg.GVisor.Enabled
-	expectAppArmor := security.IsAppArmorAvailable()
+	expectAppArmor := m.Cfg.GVisor.RequireAppArmor && security.IsAppArmorAvailable()
 	if err := security.ValidateArgsWithExpectations(args, expectGVisor, expectAppArmor); err != nil {
 		return fmt.Errorf("pre-launch security validation failed: %w", err)
 	}
@@ -407,15 +423,35 @@ func (m *Manager) findSeccompProfile() string {
 	return ""
 }
 
-// isAppArmorProfileLoaded checks if the aibox-sandbox AppArmor profile is
-// loaded on the host. We only apply AppArmor if the profile is actually loaded,
-// not just if AppArmor is available, to avoid container startup failures.
-func (m *Manager) isAppArmorProfileLoaded() bool {
-	data, err := os.ReadFile("/sys/kernel/security/apparmor/profiles")
-	if err != nil {
-		return false
+// findAppArmorProfile returns the path to the AppArmor profile source, or
+// empty string if not found. Searches /etc/aibox/, binary-relative, and
+// cwd-relative paths.
+func (m *Manager) findAppArmorProfile() string {
+	candidates := []string{
+		"/etc/aibox/apparmor/aibox-sandbox",
 	}
-	return strings.Contains(string(data), "aibox-sandbox")
+
+	// Relative to executable.
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(dir, "configs", "apparmor", "aibox-sandbox"),
+			filepath.Join(filepath.Dir(dir), "configs", "apparmor", "aibox-sandbox"),
+		)
+	}
+
+	// Relative to working directory.
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "configs", "apparmor", "aibox-sandbox"))
+	}
+
+	for _, p := range candidates {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			slog.Debug("using AppArmor profile", "path", p)
+			return p
+		}
+	}
+	return ""
 }
 
 // findProjectRoot attempts to locate the aibox project root by looking for configs/.

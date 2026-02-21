@@ -5,6 +5,7 @@
 package tests
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -87,6 +88,10 @@ func TestMountLayout_WorkspaceWritable(t *testing.T) {
 	rtPath := requireRuntime(t)
 
 	workspace := t.TempDir()
+	// Make workspace world-writable so container UID 1000 can write.
+	if err := os.Chmod(workspace, 0o777); err != nil {
+		t.Fatalf("chmod workspace: %v", err)
+	}
 
 	out, err := exec.Command(rtPath, "run", "--rm",
 		"--read-only",

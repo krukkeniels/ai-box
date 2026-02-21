@@ -1,0 +1,9 @@
+version: 1
+tools:
+  rules:
+    - match: ["git", "push"]
+      allow: true
+      risk: "review-required"
+    - match: ["rm", "-rf", "/workspace"]
+      allow: false
+      risk: "blocked-by-default"

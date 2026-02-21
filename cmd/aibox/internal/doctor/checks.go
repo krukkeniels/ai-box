@@ -73,6 +73,12 @@ func RunAll(cfg *config.Config) *Report {
 		)
 	}
 
+	// Policy and credential checks (Phase 3).
+	checks = append(checks,
+		func() CheckResult { return CheckPolicyFiles(cfg) },
+		func() CheckResult { return CheckCredentials(cfg) },
+	)
+
 	// WSL2-specific check.
 	if hostInfo.IsWSL2 {
 		checks = append(checks, func() CheckResult { return CheckWSL2(hostInfo) })
@@ -291,14 +297,14 @@ func CheckAppArmor() CheckResult {
 	if err != nil {
 		result.Status = "warn"
 		result.Message = fmt.Sprintf("could not check AppArmor profile status: %v", err)
-		result.Remediation = "Check permissions: sudo aa-status"
+		result.Remediation = "Run 'aibox setup' to load the AppArmor profile"
 		return result
 	}
 
 	if !loaded {
-		result.Status = "fail"
-		result.Message = "aibox-sandbox AppArmor profile is not loaded"
-		result.Remediation = "Load the profile:\n" +
+		result.Status = "warn"
+		result.Message = "aibox-sandbox AppArmor profile is not loaded (gVisor + seccomp still provide strong isolation)"
+		result.Remediation = "Load the profile for additional isolation:\n" +
 			"  sudo apparmor_parser -r configs/apparmor/aibox-sandbox\n" +
 			"  Or run: aibox setup"
 		return result
@@ -403,7 +409,7 @@ func findRuntime(preferred string) string {
 func CheckDiskSpace() CheckResult {
 	result := CheckResult{Name: "Disk Space"}
 
-	home, err := os.UserHomeDir()
+	home, err := config.ResolveHomeDir()
 	if err != nil {
 		result.Status = "warn"
 		result.Message = "could not determine home directory"
@@ -575,6 +581,109 @@ func CheckCoreDNS(cfg *config.Config) CheckResult {
 
 	result.Status = "pass"
 	result.Message = fmt.Sprintf("CoreDNS listening at %s", addr)
+	return result
+}
+
+// CheckPolicyFiles verifies that policy files referenced in the config exist.
+func CheckPolicyFiles(cfg *config.Config) CheckResult {
+	result := CheckResult{Name: "Policy Files"}
+
+	var missing []string
+	var found []string
+
+	// Org baseline is mandatory.
+	if cfg.Policy.OrgBaselinePath != "" {
+		if _, err := os.Stat(cfg.Policy.OrgBaselinePath); err != nil {
+			missing = append(missing, "org baseline: "+cfg.Policy.OrgBaselinePath)
+		} else {
+			found = append(found, "org baseline")
+		}
+	}
+
+	// Team policy is optional — only check if configured.
+	if cfg.Policy.TeamPolicyPath != "" {
+		if _, err := os.Stat(cfg.Policy.TeamPolicyPath); err != nil {
+			missing = append(missing, "team policy: "+cfg.Policy.TeamPolicyPath)
+		} else {
+			found = append(found, "team policy")
+		}
+	}
+
+	// Decision log directory should be writable.
+	if cfg.Policy.DecisionLogPath != "" {
+		logDir := filepath.Dir(cfg.Policy.DecisionLogPath)
+		if _, err := os.Stat(logDir); err != nil {
+			missing = append(missing, "decision log dir: "+logDir)
+		}
+	}
+
+	if len(missing) > 0 && len(found) == 0 {
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("policy files not found: %s", strings.Join(missing, "; "))
+		result.Remediation = "Install org baseline policy:\n" +
+			"  sudo mkdir -p /etc/aibox\n" +
+			"  sudo cp aibox-policies/org/policy.yaml /etc/aibox/org-policy.yaml\n" +
+			"  Or run: aibox setup"
+		return result
+	}
+
+	if len(missing) > 0 {
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("some policy files missing: %s (found: %s)", strings.Join(missing, "; "), strings.Join(found, ", "))
+		return result
+	}
+
+	result.Status = "pass"
+	if len(found) > 0 {
+		result.Message = fmt.Sprintf("policy files found: %s", strings.Join(found, ", "))
+	} else {
+		result.Message = "no policy paths configured"
+	}
+	return result
+}
+
+// CheckCredentials verifies the credential provider is functional.
+func CheckCredentials(cfg *config.Config) CheckResult {
+	result := CheckResult{Name: "Credential Provider"}
+
+	mode := cfg.Credentials.Mode
+	if mode == "" {
+		mode = "fallback"
+	}
+
+	switch mode {
+	case "fallback":
+		result.Status = "pass"
+		result.Message = "credential mode: fallback (OS keychain / encrypted file)"
+	case "vault":
+		// Check that Vault address is configured.
+		if cfg.Credentials.VaultAddr == "" {
+			result.Status = "fail"
+			result.Message = "credential mode: vault, but vault_addr is not configured"
+			result.Remediation = "Set credentials.vault_addr in config or AIBOX_CREDENTIALS_VAULT_ADDR env var"
+			return result
+		}
+
+		// Check SPIFFE socket if configured.
+		if cfg.Credentials.SPIFFESocketPath != "" {
+			if _, err := os.Stat(cfg.Credentials.SPIFFESocketPath); err != nil {
+				result.Status = "warn"
+				result.Message = fmt.Sprintf("credential mode: vault (SPIFFE socket not found: %s)", cfg.Credentials.SPIFFESocketPath)
+				result.Remediation = "Ensure SPIRE agent is running:\n" +
+					"  sudo systemctl start spire-agent\n" +
+					"  Or set credentials.mode=fallback for local credential storage"
+				return result
+			}
+		}
+
+		result.Status = "pass"
+		result.Message = fmt.Sprintf("credential mode: vault (%s)", cfg.Credentials.VaultAddr)
+	default:
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("unknown credential mode: %s", mode)
+		result.Remediation = "Set credentials.mode to \"fallback\" or \"vault\""
+	}
+
 	return result
 }
 

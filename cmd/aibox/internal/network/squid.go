@@ -17,6 +17,7 @@ var DefaultAllowedDomains = []string{
 	"nexus.internal",   // Package mirrors (npm, Maven, PyPI, NuGet, Go, Cargo)
 	"foundry.internal", // LLM API gateway
 	"git.internal",     // Source repos and policy repo
+	"vault.internal",   // Credential management and secret storage
 }
 
 // SquidConfig holds the configuration for the Squid proxy.

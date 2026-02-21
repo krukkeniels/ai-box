@@ -8,19 +8,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var systemSetup bool
+
 var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Initialize AI-Box environment on this host",
-	Long: `Setup verifies host prerequisites (runtime, gVisor, kernel features),
-pulls required container images, and creates the initial configuration.
+	Long: `Setup prepares a host for running AI-Box sandboxes.
 
-On native Linux, setup will:
-  - Detect and verify the container runtime (Podman/Docker)
-  - Check gVisor (runsc) installation
-  - Install the seccomp profile to /etc/aibox/seccomp.json
-  - Load the AppArmor profile (aibox-sandbox)
-  - Create default config at ~/.config/aibox/config.yaml
-  - Pull and verify the base container image
+There are two phases:
+
+  aibox setup --system   (requires root, run once per machine)
+    Installs system-wide security profiles and network services:
+    - Seccomp profile to /etc/aibox/seccomp.json
+    - AppArmor profile (aibox-sandbox)
+    - nftables rules for container network isolation
+    - Squid proxy configuration and service
+    - CoreDNS configuration and service
+
+  aibox setup            (no root needed, run by each developer)
+    Sets up the user environment:
+    - Detects and verifies the container runtime (Podman/Docker)
+    - Checks gVisor (runsc) installation
+    - Creates default config at ~/.config/aibox/config.yaml
+    - Pulls and verifies the base container image
+    - Warns if system setup has not been completed
 
 On WSL2, setup additionally:
   - Checks WSL2 kernel version (5.15+ required for gVisor systrap)
@@ -30,6 +41,7 @@ On WSL2, setup additionally:
 }
 
 func init() {
+	setupCmd.Flags().BoolVar(&systemSetup, "system", false, "run privileged system-level setup (requires root)")
 	rootCmd.AddCommand(setupCmd)
 }
 
@@ -44,5 +56,9 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return setup.WSL2Setup(Cfg)
 	}
 
-	return setup.LinuxSetup(Cfg)
+	if systemSetup {
+		return setup.SystemSetup(Cfg)
+	}
+
+	return setup.UserSetup(Cfg)
 }

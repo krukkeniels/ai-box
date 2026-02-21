@@ -1,54 +1,30 @@
-package aibox.org.baseline
+package aibox.policy
 
-# AI-Box Organization Baseline Policy
-# This policy is immutable and enforced on all sandboxes.
-# Team and project policies can only tighten these rules, never loosen them.
+import data.aibox.policy.runtime
+import data.aibox.policy.network
+import data.aibox.policy.filesystem
+import data.aibox.policy.credentials
 
-default allow_sandbox_start = false
-
-# Require gVisor runtime
-allow_sandbox_start {
-    input.runtime == "runsc"
+# Aggregate all deny rules from sub-policies.
+deny contains msg if {
+    runtime.deny[msg]
 }
 
-# Deny wildcard network access
-deny_network[msg] {
-    some rule in input.network.allow
-    rule.host == "*"
-    msg := "Wildcard network access is not permitted by org baseline"
+deny contains msg if {
+    network.deny[msg]
 }
 
-# Require image signature verification
-deny_image[msg] {
-    not input.image.signed
-    msg := "Unsigned images are not permitted"
+deny contains msg if {
+    filesystem.deny[msg]
 }
 
-# Require rate limiting on LLM API
-deny_llm[msg] {
-    input.llm.rate_limit_rpm > 60
-    msg := sprintf("LLM rate limit %d exceeds org maximum of 60 rpm", [input.llm.rate_limit_rpm])
+deny contains msg if {
+    credentials.deny[msg]
 }
 
-deny_llm[msg] {
-    input.llm.rate_limit_tpm > 100000
-    msg := sprintf("LLM token limit %d exceeds org maximum of 100000 tpm", [input.llm.rate_limit_tpm])
-}
+# Overall allow decision: allowed when no deny rules fire.
+default allow := false
 
-# Enforce non-root execution
-deny_sandbox[msg] {
-    input.user.uid == 0
-    msg := "Running as root is not permitted"
-}
-
-# Enforce read-only rootfs
-deny_sandbox[msg] {
-    not input.filesystem.read_only_root
-    msg := "Read-only root filesystem is required"
-}
-
-# Enforce capability drop
-deny_sandbox[msg] {
-    count(input.security.capabilities) > 0
-    msg := "No Linux capabilities are permitted"
+allow if {
+    count(deny) == 0
 }

@@ -40,6 +40,8 @@
         10.0.0.12 foundry.internal
         # Git server - code push/pull for sandboxed repositories.
         10.0.0.13 git.internal
+        # Vault - credential management and secret storage.
+        10.0.0.14 vault.internal
         # Pass unmatched queries to the next plugin (template catch-all).
         fallthrough
     }

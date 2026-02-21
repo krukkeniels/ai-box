@@ -61,5 +61,23 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Workspace: %s\n", info.Workspace)
 	}
 
+	// Policy and credential status (Phase 3).
+	if Cfg != nil {
+		fmt.Printf("\nPolicy:\n")
+		fmt.Printf("  Org baseline:  %s\n", Cfg.Policy.OrgBaselinePath)
+		if Cfg.Policy.TeamPolicyPath != "" {
+			fmt.Printf("  Team policy:   %s\n", Cfg.Policy.TeamPolicyPath)
+		}
+		fmt.Printf("  Project policy: %s\n", Cfg.Policy.ProjectPolicyPath)
+		fmt.Printf("  Decision log:  %s\n", Cfg.Policy.DecisionLogPath)
+
+		fmt.Printf("\nCredentials:\n")
+		fmt.Printf("  Mode: %s\n", Cfg.Credentials.Mode)
+		if Cfg.Credentials.Mode == "vault" {
+			fmt.Printf("  Vault: %s\n", Cfg.Credentials.VaultAddr)
+			fmt.Printf("  SPIFFE domain: %s\n", Cfg.Credentials.SPIFFETrustDomain)
+		}
+	}
+
 	return nil
 }

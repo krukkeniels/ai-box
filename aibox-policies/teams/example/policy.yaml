@@ -1,0 +1,19 @@
+version: 1
+network:
+  mode: "deny-by-default"
+  allow:
+    - id: "artifact-repo"
+      hosts: ["nexus.internal"]
+      ports: [443]
+    - id: "git-server"
+      hosts: ["git.internal"]
+      ports: [443]
+tools:
+  rules:
+    - match: ["npm", "publish"]
+      allow: false
+      risk: "blocked-by-default"
+resources:
+  cpu: "4"
+  memory: "8Gi"
+  disk: "40Gi"

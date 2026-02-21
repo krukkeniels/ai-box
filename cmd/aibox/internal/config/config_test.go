@@ -7,6 +7,11 @@ import (
 )
 
 func TestDefaultValues(t *testing.T) {
+	// Isolate from host config: point HOME at an empty temp dir so
+	// Load("") cannot pick up ~/.config/aibox/config.yaml.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load() with no config file: %v", err)
@@ -109,6 +114,10 @@ logging:
 }
 
 func TestEnvVarOverrides(t *testing.T) {
+	// Isolate from host config.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
 	// Set env vars.
 	t.Setenv("AIBOX_RUNTIME", "docker")
 	t.Setenv("AIBOX_IMAGE", "test-registry.io/aibox/test:v1")

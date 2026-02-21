@@ -188,6 +188,12 @@ func TestRuntimeArgs_Tmpfs(t *testing.T) {
 	if !strings.Contains(args[1], "target=/tmp") {
 		t.Errorf("tmpfs mount arg missing target: %q", args[1])
 	}
+	if strings.Contains(args[1], ",size=") {
+		t.Errorf("tmpfs mount arg should use tmpfs-size, not size: %q", args[1])
+	}
+	if !strings.Contains(args[1], "tmpfs-size=2g") {
+		t.Errorf("tmpfs mount arg missing tmpfs-size=2g: %q", args[1])
+	}
 }
 
 func TestVolumePrefix(t *testing.T) {

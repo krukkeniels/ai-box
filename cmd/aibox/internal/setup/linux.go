@@ -19,7 +19,91 @@ type Step struct {
 	Run  func() error
 }
 
+// IsSystemSetupDone checks whether the system-level setup has been completed
+// by verifying key files exist in /etc/aibox/.
+func IsSystemSetupDone() bool {
+	markers := []string{
+		"/etc/aibox/seccomp.json",
+	}
+	for _, m := range markers {
+		if _, err := os.Stat(m); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// SystemSetup performs privileged setup that requires root. This installs
+// system-wide security profiles, network rules, and services. It should be
+// run once per machine by an administrator.
+func SystemSetup(cfg *config.Config) error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("system setup requires root privileges. Run: sudo aibox setup --system")
+	}
+
+	steps := []Step{
+		{"Install seccomp profile", func() error { return installSeccomp() }},
+		{"Load AppArmor profile", func() error { return loadAppArmor() }},
+	}
+
+	if cfg.Network.Enabled {
+		steps = append(steps,
+			Step{"Install nftables rules", func() error { return installNFTables(cfg) }},
+			Step{"Configure Squid proxy", func() error { return configureSquid(cfg) }},
+			Step{"Configure CoreDNS", func() error { return configureCoreDNS(cfg) }},
+		)
+	}
+
+	fmt.Println("AI-Box system setup (Linux) — requires root")
+	fmt.Println(strings.Repeat("-", 40))
+
+	for i, step := range steps {
+		fmt.Printf("[%d/%d] %s ...\n", i+1, len(steps), step.Name)
+		if err := step.Run(); err != nil {
+			return fmt.Errorf("step %q failed: %w", step.Name, err)
+		}
+	}
+
+	fmt.Println(strings.Repeat("-", 40))
+	fmt.Println("System setup complete. Each developer should now run: aibox setup")
+	return nil
+}
+
+// UserSetup performs unprivileged setup that each developer runs. It verifies
+// host prerequisites, creates the user config, and pulls container images.
+// It warns (but does not fail) if system setup has not been completed.
+func UserSetup(cfg *config.Config) error {
+	if !IsSystemSetupDone() {
+		fmt.Println("WARNING: System setup has not been completed.")
+		fmt.Println("  An administrator should run: sudo aibox setup --system")
+		fmt.Println("  Continuing with user setup...")
+		fmt.Println()
+	}
+
+	steps := []Step{
+		{"Detect container runtime", func() error { return checkRuntime(cfg.Runtime) }},
+		{"Check gVisor (runsc)", func() error { return checkGVisor(cfg) }},
+		{"Create default configuration", func() error { return createDefaultConfig() }},
+		{"Pull base image", func() error { return pullBaseImage(cfg) }},
+	}
+
+	fmt.Println("AI-Box user setup (Linux)")
+	fmt.Println(strings.Repeat("-", 40))
+
+	for i, step := range steps {
+		fmt.Printf("[%d/%d] %s ...\n", i+1, len(steps), step.Name)
+		if err := step.Run(); err != nil {
+			return fmt.Errorf("step %q failed: %w", step.Name, err)
+		}
+	}
+
+	fmt.Println(strings.Repeat("-", 40))
+	fmt.Println("Setup complete. Run 'aibox doctor' to verify.")
+	return nil
+}
+
 // LinuxSetup performs the full setup flow on native Linux.
+// Deprecated: Use SystemSetup and UserSetup separately.
 func LinuxSetup(cfg *config.Config) error {
 	steps := []Step{
 		{"Detect container runtime", func() error { return checkRuntime(cfg.Runtime) }},
@@ -148,6 +232,11 @@ func installSeccomp() error {
 		}
 	}
 
+	// Verify the file was actually installed.
+	if _, err := os.Stat(targetPath); err != nil {
+		return fmt.Errorf("seccomp profile not found at %s after install: %w", targetPath, err)
+	}
+
 	fmt.Printf("  Installed %s\n", targetPath)
 	return nil
 }
@@ -183,6 +272,15 @@ func loadAppArmor() error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("loading AppArmor profile: %w (try running with sudo)", err)
 		}
+	}
+
+	// Verify the profile is actually loaded in the kernel.
+	loaded, err := security.IsProfileLoaded("aibox-sandbox")
+	if err != nil {
+		return fmt.Errorf("could not verify AppArmor profile after load: %w", err)
+	}
+	if !loaded {
+		return fmt.Errorf("AppArmor profile was loaded but verification failed — profile not found in kernel")
 	}
 
 	fmt.Println("  aibox-sandbox profile loaded")

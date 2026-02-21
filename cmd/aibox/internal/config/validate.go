@@ -76,6 +76,24 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Sprintf("invalid logging.format %q: must be \"text\" or \"json\"", c.Logging.Format))
 	}
 
+	// Credentials mode.
+	switch c.Credentials.Mode {
+	case "fallback", "vault", "":
+		// ok
+	default:
+		errs = append(errs, fmt.Sprintf("invalid credentials.mode %q: must be \"fallback\" or \"vault\"", c.Credentials.Mode))
+	}
+
+	// If vault mode, vault_addr is required.
+	if c.Credentials.Mode == "vault" && c.Credentials.VaultAddr == "" {
+		errs = append(errs, "credentials.vault_addr must be set when credentials.mode is \"vault\"")
+	}
+
+	// Policy hot reload interval must be non-negative.
+	if c.Policy.HotReloadSecs < 0 {
+		errs = append(errs, fmt.Sprintf("policy.hot_reload_secs must be >= 0, got %d", c.Policy.HotReloadSecs))
+	}
+
 	// Logging level.
 	switch strings.ToLower(c.Logging.Level) {
 	case "debug", "info", "warn", "error":

@@ -3,28 +3,49 @@ package config
 import (
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
 )
 
+// ResolveHomeDir returns the home directory of the real (non-root) user.
+// When running under sudo, os.UserHomeDir() returns /root, which won't
+// contain the user's config. This function checks SUDO_USER and resolves
+// the invoking user's home directory instead.
+func ResolveHomeDir() (string, error) {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		u, err := user.Lookup(sudoUser)
+		if err != nil {
+			slog.Debug("SUDO_USER lookup failed, falling back", "sudo_user", sudoUser, "error", err)
+		} else {
+			slog.Debug("resolved home via SUDO_USER", "user", sudoUser, "home", u.HomeDir)
+			return u.HomeDir, nil
+		}
+	}
+	return os.UserHomeDir()
+}
+
 // Config is the top-level configuration for aibox.
 type Config struct {
-	Runtime   string          `yaml:"runtime" mapstructure:"runtime"`
-	Image     string          `yaml:"image" mapstructure:"image"`
-	GVisor    GVisorConfig    `yaml:"gvisor" mapstructure:"gvisor"`
-	Resources ResourceConfig  `yaml:"resources" mapstructure:"resources"`
-	Workspace WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
-	Registry  RegistryConfig  `yaml:"registry" mapstructure:"registry"`
-	Network   NetworkConfig   `yaml:"network" mapstructure:"network"`
-	Logging   LoggingConfig   `yaml:"logging" mapstructure:"logging"`
+	Runtime     string            `yaml:"runtime" mapstructure:"runtime"`
+	Image       string            `yaml:"image" mapstructure:"image"`
+	GVisor      GVisorConfig      `yaml:"gvisor" mapstructure:"gvisor"`
+	Resources   ResourceConfig    `yaml:"resources" mapstructure:"resources"`
+	Workspace   WorkspaceConfig   `yaml:"workspace" mapstructure:"workspace"`
+	Registry    RegistryConfig    `yaml:"registry" mapstructure:"registry"`
+	Network     NetworkConfig     `yaml:"network" mapstructure:"network"`
+	Policy      PolicyConfig      `yaml:"policy" mapstructure:"policy"`
+	Credentials CredentialsConfig `yaml:"credentials" mapstructure:"credentials"`
+	Logging     LoggingConfig     `yaml:"logging" mapstructure:"logging"`
 }
 
 // GVisorConfig holds gVisor sandbox settings.
 type GVisorConfig struct {
-	Enabled  bool   `yaml:"enabled" mapstructure:"enabled"`
-	Platform string `yaml:"platform" mapstructure:"platform"` // systrap or ptrace
+	Enabled         bool   `yaml:"enabled" mapstructure:"enabled"`
+	Platform        string `yaml:"platform" mapstructure:"platform"`                 // systrap or ptrace
+	RequireAppArmor bool   `yaml:"require_apparmor" mapstructure:"require_apparmor"` // if true, AppArmor failure is fatal (default false)
 }
 
 // ResourceConfig holds container resource limits.
@@ -57,6 +78,23 @@ type NetworkConfig struct {
 	LLMGateway     string   `yaml:"llm_gateway" mapstructure:"llm_gateway"`         // LLM API gateway (default "foundry.internal")
 }
 
+// PolicyConfig holds policy engine settings (Phase 3).
+type PolicyConfig struct {
+	OrgBaselinePath   string `yaml:"org_baseline_path" mapstructure:"org_baseline_path"`     // org baseline policy (default "/etc/aibox/org-policy.yaml")
+	TeamPolicyPath    string `yaml:"team_policy_path" mapstructure:"team_policy_path"`       // team policy (optional)
+	ProjectPolicyPath string `yaml:"project_policy_path" mapstructure:"project_policy_path"` // project policy (default "aibox/policy.yaml" relative to workspace)
+	DecisionLogPath   string `yaml:"decision_log_path" mapstructure:"decision_log_path"`     // decision log (default "/var/log/aibox/decisions.jsonl")
+	HotReloadSecs     int    `yaml:"hot_reload_secs" mapstructure:"hot_reload_secs"`         // policy reload interval in seconds (0=disabled)
+}
+
+// CredentialsConfig holds credential management settings (Phase 3).
+type CredentialsConfig struct {
+	Mode              string `yaml:"mode" mapstructure:"mode"`                               // "fallback" or "vault"
+	VaultAddr         string `yaml:"vault_addr" mapstructure:"vault_addr"`                   // Vault server address
+	SPIFFETrustDomain string `yaml:"spiffe_trust_domain" mapstructure:"spiffe_trust_domain"` // SPIFFE trust domain
+	SPIFFESocketPath  string `yaml:"spiffe_socket_path" mapstructure:"spiffe_socket_path"`   // SPIRE agent socket
+}
+
 // LoggingConfig holds logging preferences.
 type LoggingConfig struct {
 	Format string `yaml:"format" mapstructure:"format"` // text or json
@@ -69,6 +107,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("image", "harbor.internal/aibox/base:24.04")
 	v.SetDefault("gvisor.enabled", true)
 	v.SetDefault("gvisor.platform", "systrap")
+	v.SetDefault("gvisor.require_apparmor", false)
 	v.SetDefault("resources.cpus", 4)
 	v.SetDefault("resources.memory", "8g")
 	v.SetDefault("resources.tmp_size", "2g")
@@ -86,8 +125,18 @@ func setDefaults(v *viper.Viper) {
 		"nexus.internal",
 		"foundry.internal",
 		"git.internal",
+		"vault.internal",
 	})
 	v.SetDefault("network.llm_gateway", "foundry.internal")
+	v.SetDefault("policy.org_baseline_path", "/etc/aibox/org-policy.yaml")
+	v.SetDefault("policy.team_policy_path", "")
+	v.SetDefault("policy.project_policy_path", "aibox/policy.yaml")
+	v.SetDefault("policy.decision_log_path", "/var/log/aibox/decisions.jsonl")
+	v.SetDefault("policy.hot_reload_secs", 0)
+	v.SetDefault("credentials.mode", "fallback")
+	v.SetDefault("credentials.vault_addr", "https://vault.internal:8200")
+	v.SetDefault("credentials.spiffe_trust_domain", "aibox.org.internal")
+	v.SetDefault("credentials.spiffe_socket_path", "/run/spire/sockets/agent.sock")
 	v.SetDefault("logging.format", "text")
 	v.SetDefault("logging.level", "info")
 }
@@ -101,6 +150,7 @@ func bindEnvVars(v *viper.Viper) {
 		"image":                    "AIBOX_IMAGE",
 		"gvisor.enabled":           "AIBOX_GVISOR_ENABLED",
 		"gvisor.platform":          "AIBOX_GVISOR_PLATFORM",
+		"gvisor.require_apparmor":  "AIBOX_GVISOR_REQUIRE_APPARMOR",
 		"resources.cpus":           "AIBOX_RESOURCES_CPUS",
 		"resources.memory":         "AIBOX_RESOURCES_MEMORY",
 		"resources.tmp_size":       "AIBOX_RESOURCES_TMP_SIZE",
@@ -114,6 +164,15 @@ func bindEnvVars(v *viper.Viper) {
 		"network.dns_addr":         "AIBOX_NETWORK_DNS_ADDR",
 		"network.dns_port":         "AIBOX_NETWORK_DNS_PORT",
 		"network.llm_gateway":      "AIBOX_NETWORK_LLM_GATEWAY",
+		"policy.org_baseline_path":     "AIBOX_POLICY_ORG_BASELINE_PATH",
+		"policy.team_policy_path":     "AIBOX_POLICY_TEAM_POLICY_PATH",
+		"policy.project_policy_path":  "AIBOX_POLICY_PROJECT_POLICY_PATH",
+		"policy.decision_log_path":    "AIBOX_POLICY_DECISION_LOG_PATH",
+		"policy.hot_reload_secs":      "AIBOX_POLICY_HOT_RELOAD_SECS",
+		"credentials.mode":            "AIBOX_CREDENTIALS_MODE",
+		"credentials.vault_addr":      "AIBOX_CREDENTIALS_VAULT_ADDR",
+		"credentials.spiffe_trust_domain": "AIBOX_CREDENTIALS_SPIFFE_TRUST_DOMAIN",
+		"credentials.spiffe_socket_path":  "AIBOX_CREDENTIALS_SPIFFE_SOCKET_PATH",
 		"logging.format":           "AIBOX_LOGGING_FORMAT",
 		"logging.level":            "AIBOX_LOGGING_LEVEL",
 	}
@@ -124,7 +183,7 @@ func bindEnvVars(v *viper.Viper) {
 
 // DefaultConfigDir returns the default configuration directory path.
 func DefaultConfigDir() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := ResolveHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +214,7 @@ func Load(configPath string) (*Config, error) {
 	if configPath != "" {
 		v.SetConfigFile(configPath)
 	} else {
-		home, err := os.UserHomeDir()
+		home, err := ResolveHomeDir()
 		if err != nil {
 			slog.Warn("could not determine home directory", "error", err)
 		} else {
@@ -215,7 +274,8 @@ image: harbor.internal/aibox/base:24.04
 
 gvisor:
   enabled: true
-  platform: systrap   # systrap (default, best perf) or ptrace (broader compat)
+  platform: systrap        # systrap (default, best perf) or ptrace (broader compat)
+  require_apparmor: false  # if true, container start fails without AppArmor
 
 resources:
   cpus: 4
@@ -241,7 +301,21 @@ network:
     - nexus.internal
     - foundry.internal
     - git.internal
+    - vault.internal
   llm_gateway: foundry.internal
+
+policy:
+  org_baseline_path: /etc/aibox/org-policy.yaml
+  # team_policy_path: ""                       # team policy file (optional)
+  project_policy_path: aibox/policy.yaml       # relative to workspace
+  decision_log_path: /var/log/aibox/decisions.jsonl
+  hot_reload_secs: 0                           # 0 = disabled; set to 300 for 5-min refresh
+
+credentials:
+  mode: fallback                               # "fallback" (env var) or "vault"
+  vault_addr: "https://vault.internal:8200"
+  spiffe_trust_domain: aibox.org.internal
+  spiffe_socket_path: /run/spire/sockets/agent.sock
 
 logging:
   format: text         # text or json

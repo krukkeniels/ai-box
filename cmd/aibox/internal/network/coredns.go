@@ -27,6 +27,7 @@ func DefaultDomainEntries() []DomainEntry {
 		{Domain: "nexus.internal", IP: "10.0.0.11"},
 		{Domain: "foundry.internal", IP: "10.0.0.12"},
 		{Domain: "git.internal", IP: "10.0.0.13"},
+		{Domain: "vault.internal", IP: "10.0.0.14"},
 	}
 }
 
