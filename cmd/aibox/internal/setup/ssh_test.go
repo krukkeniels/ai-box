@@ -113,7 +113,7 @@ func TestWriteSSHConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	privPath := filepath.Join(sshKeyDir, "aibox_ed25519")
-	os.WriteFile(privPath, []byte("fake-key"), 0o600)
+	_ = os.WriteFile(privPath, []byte("fake-key"), 0o600)
 
 	origFunc := sshKeyDirFunc
 	sshKeyDirFunc = func() (string, error) { return sshKeyDir, nil }

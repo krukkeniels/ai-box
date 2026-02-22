@@ -2,8 +2,6 @@ package policy
 
 import (
 	"bufio"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -386,14 +384,6 @@ func EntryFromResult(input PolicyInput, result DecisionResult, sandboxID string)
 		Reason:     result.Reason,
 		DurationMS: float64(result.Duration.Microseconds()) / 1000.0,
 	}
-}
-
-// randomHex returns n random hex characters. Used only for internal disambiguation;
-// not a security primitive.
-func randomHex(n int) string {
-	b := make([]byte, (n+1)/2)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)[:n]
 }
 
 // SanitizePath ensures the log path has a .jsonl extension and is absolute.
