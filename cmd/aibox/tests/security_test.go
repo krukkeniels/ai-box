@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package tests contains security-focused integration tests.
 // These tests verify that the security controls enforced by AI-Box
 // actually work at runtime.

@@ -1,3 +1,5 @@
+//go:build integration
+
 // Phase 5 Exit Criteria Verification Tests
 //
 // These tests verify all 10 exit criteria from the Phase 5 plan
@@ -5,7 +7,7 @@
 // exit criterion and validates the implementation without requiring live
 // infrastructure (Falco, Vector, Grafana, etc.).
 //
-// Run with: go test -v -count=1 ./tests/ -run TestPhase5
+// Run with: go test -v -count=1 -tags=integration ./tests/ -run TestPhase5
 package tests
 
 import (

@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package tests contains filesystem integration tests.
 // These verify the mount layout, tmpfs behavior, and cache persistence.
 //

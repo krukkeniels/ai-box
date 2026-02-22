@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package tests contains integration tests that require a running container runtime.
 // Run with: go test -tags=integration ./tests/
 package tests
