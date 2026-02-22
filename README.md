@@ -88,6 +88,7 @@ All settings can be overridden with `AIBOX_` environment variables. See [docs/co
 | Document | Description |
 |----------|-------------|
 | [Installation](docs/installation.md) | All install methods, post-install, troubleshooting |
+| [Windows Installation](docs/windows-installation.md) | Windows 11 + WSL2 setup guide |
 | [Configuration](docs/configuration.md) | All config options and environment variables |
 | [Contributing](docs/contributing.md) | Development setup, testing, project structure |
 | [Specification](SPEC-FINAL.md) | Full specification v1.1 -- architecture, threat model, API |

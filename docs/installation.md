@@ -1,5 +1,8 @@
 # Installation
 
+> **Windows 11 users**: See the [Windows Installation Guide](windows-installation.md)
+> for a complete walkthrough from enabling WSL2 to a working AI-Box setup.
+
 ## Quick install
 
 The install script detects your OS, downloads the latest release, and places the binaries on your PATH:
