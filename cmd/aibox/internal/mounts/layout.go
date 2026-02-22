@@ -70,6 +70,13 @@ func Layout(workspacePath, tmpSize, varTmpSize string) ([]Mount, error) {
 			Options:     fmt.Sprintf("rw,noexec,nosuid,size=%s", varTmpSize),
 			Description: "ephemeral var temp",
 		},
+		// tmpfs for /run (needed by sshd on read-only rootfs).
+		{
+			Type:        "tmpfs",
+			Target:      "/run",
+			Options:     "rw,noexec,nosuid,size=64m",
+			Description: "runtime state for sshd",
+		},
 	}
 
 	// Build cache volumes.

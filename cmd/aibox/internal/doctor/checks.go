@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aibox/aibox/internal/config"
+	"github.com/aibox/aibox/internal/falco"
 	"github.com/aibox/aibox/internal/host"
 	"github.com/aibox/aibox/internal/network"
 	"github.com/aibox/aibox/internal/security"
@@ -78,6 +79,13 @@ func RunAll(cfg *config.Config) *Report {
 		func() CheckResult { return CheckPolicyFiles(cfg) },
 		func() CheckResult { return CheckCredentials(cfg) },
 	)
+
+	// Audit and monitoring checks (Phase 5).
+	if cfg.Audit.FalcoEnabled {
+		checks = append(checks,
+			func() CheckResult { return CheckFalco(cfg) },
+		)
+	}
 
 	// WSL2-specific check.
 	if hostInfo.IsWSL2 {
@@ -548,7 +556,7 @@ func CheckNFTables() CheckResult {
 func CheckSquidProxy(cfg *config.Config) CheckResult {
 	result := CheckResult{Name: "Squid Proxy"}
 
-	addr := fmt.Sprintf("%s:%d", cfg.Network.ProxyAddr, cfg.Network.ProxyPort)
+	addr := net.JoinHostPort(cfg.Network.ProxyAddr, strconv.Itoa(cfg.Network.ProxyPort))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		result.Status = "fail"
@@ -568,7 +576,7 @@ func CheckSquidProxy(cfg *config.Config) CheckResult {
 func CheckCoreDNS(cfg *config.Config) CheckResult {
 	result := CheckResult{Name: "CoreDNS Resolver"}
 
-	addr := fmt.Sprintf("%s:%d", cfg.Network.DNSAddr, cfg.Network.DNSPort)
+	addr := net.JoinHostPort(cfg.Network.DNSAddr, strconv.Itoa(cfg.Network.DNSPort))
 	conn, err := net.DialTimeout("udp", addr, 3*time.Second)
 	if err != nil {
 		result.Status = "fail"
@@ -684,6 +692,57 @@ func CheckCredentials(cfg *config.Config) CheckResult {
 		result.Remediation = "Set credentials.mode to \"fallback\" or \"vault\""
 	}
 
+	return result
+}
+
+// CheckFalco verifies that Falco runtime monitoring is installed, running,
+// and has the AI-Box rules deployed.
+func CheckFalco(cfg *config.Config) CheckResult {
+	result := CheckResult{Name: "Falco Runtime Monitoring"}
+
+	falcoCfg := falco.Config{
+		Enabled:    cfg.Audit.FalcoEnabled,
+		RulesPath:  "/etc/aibox/falco_rules.yaml",
+		ConfigPath: "/etc/aibox/falco.yaml",
+		AlertsPath: "/var/log/aibox/falco-alerts.jsonl",
+	}
+	mgr := falco.NewManager(falcoCfg)
+
+	if !mgr.IsInstalled() {
+		result.Status = "fail"
+		result.Message = "Falco is not installed"
+		result.Remediation = "Install Falco:\n" +
+			"  curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg\n" +
+			"  sudo apt-get update && sudo apt-get install -y falco\n" +
+			"  Or run: sudo aibox setup --system"
+		return result
+	}
+
+	version, err := mgr.Version()
+	if err != nil {
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("Falco installed but version check failed: %v", err)
+		return result
+	}
+
+	if !mgr.IsRunning() {
+		result.Status = "fail"
+		result.Message = fmt.Sprintf("Falco is installed (%s) but not running", firstLine(version))
+		result.Remediation = "Start Falco:\n" +
+			"  sudo systemctl start falco\n" +
+			"  Or run: sudo aibox setup --system"
+		return result
+	}
+
+	if err := mgr.HealthCheck(); err != nil {
+		result.Status = "warn"
+		result.Message = fmt.Sprintf("Falco running but health check failed: %v", err)
+		result.Remediation = "Run 'sudo aibox setup --system' to deploy Falco rules and config"
+		return result
+	}
+
+	result.Status = "pass"
+	result.Message = fmt.Sprintf("Falco running (%s), rules deployed, alerts output configured", firstLine(version))
 	return result
 }
 

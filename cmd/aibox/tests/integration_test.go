@@ -11,6 +11,24 @@ import (
 	"testing"
 )
 
+// cleanupAiboxContainers removes all containers with the aibox label.
+// This prevents stale containers from previous test runs from interfering
+// with status checks (findAnyContainer returns the first match by label).
+func cleanupAiboxContainers(t *testing.T, rtPath string) {
+	t.Helper()
+	out, err := exec.Command(rtPath, "ps", "-a", "--filter", "label=aibox=true", "--format", "{{.Names}}").Output()
+	if err != nil {
+		return
+	}
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name == "" {
+			continue
+		}
+		t.Logf("cleaning up stale container: %s", name)
+		_ = exec.Command(rtPath, "rm", "-f", name).Run()
+	}
+}
+
 // requireRuntime skips the test if no container runtime is available.
 func requireRuntime(t *testing.T) string {
 	t.Helper()
@@ -94,6 +112,12 @@ func TestContainerLifecycle(t *testing.T) {
 	aibox := requireAibox(t)
 	rtPath := requireRuntime(t)
 	cfgPath := writeTestConfig(t, runtimeName(rtPath))
+
+	// Remove stale containers from previous test runs so that the status
+	// check (which finds containers by label, not by name) doesn't pick up
+	// an exited container from a prior run.
+	cleanupAiboxContainers(t, rtPath)
+	t.Cleanup(func() { cleanupAiboxContainers(t, rtPath) })
 
 	// Ensure the test image is available.
 	if err := exec.Command(rtPath, "image", "exists", "docker.io/library/ubuntu:24.04").Run(); err != nil {

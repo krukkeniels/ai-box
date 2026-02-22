@@ -193,7 +193,10 @@ func TestValidateArgs_MissingCapDrop(t *testing.T) {
 	}
 }
 
-func TestValidateArgs_RootUserRejected(t *testing.T) {
+func TestValidateArgs_RootUserAccepted(t *testing.T) {
+	// Root user is accepted because sshd needs root to bind port 22.
+	// The entrypoint drops to non-root after starting sshd.
+	// Security is enforced via --cap-drop=ALL, --no-new-privileges, and seccomp.
 	rootArgs := []string{"--user=0", "--user=0:0", "--user=root", "--user=root:root"}
 	for _, rootArg := range rootArgs {
 		args := []string{
@@ -204,8 +207,8 @@ func TestValidateArgs_RootUserRejected(t *testing.T) {
 			"--security-opt=seccomp=/etc/aibox/seccomp.json",
 		}
 		err := ValidateArgs(args)
-		if err == nil {
-			t.Errorf("ValidateArgs() should reject root user arg %q", rootArg)
+		if err != nil {
+			t.Errorf("ValidateArgs() should accept root user arg %q (sshd needs root): %v", rootArg, err)
 		}
 	}
 }

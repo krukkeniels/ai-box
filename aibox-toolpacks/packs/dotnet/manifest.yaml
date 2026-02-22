@@ -1,0 +1,38 @@
+name: dotnet
+version: "8"
+description: ".NET SDK 8, NuGet CLI, MSBuild"
+maintainer: platform-team
+tags:
+  - language
+  - clr
+  - dotnet
+
+install:
+  method: docker-layer
+  base_image: "mcr.microsoft.com/dotnet/sdk:8.0"
+  script: install.sh
+
+network:
+  requires:
+    - id: nuget-feed
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/usr/share/dotnet"
+    - "/opt/toolpacks/dotnet"
+  caches:
+    - "$HOME/.nuget/packages"
+    - "$HOME/.dotnet/tools"
+
+resources:
+  min_memory: "4GB"
+  recommended_memory: "6GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+verify:
+  - command: "dotnet --version"
+    expect_exit_code: 0

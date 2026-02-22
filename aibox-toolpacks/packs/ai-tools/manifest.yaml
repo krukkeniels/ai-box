@@ -1,0 +1,43 @@
+name: ai-tools
+version: "1"
+description: "Claude Code CLI, Codex CLI - auto-configured for LLM sidecar proxy"
+maintainer: platform-team
+tags:
+  - ai
+  - tools
+  - llm
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: llm-proxy
+      hosts: ["localhost"]
+      ports: [8443]
+    - id: npm-registry
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/ai-tools"
+  caches:
+    - "$HOME/.claude"
+    - "$HOME/.codex"
+
+resources:
+  min_memory: "2GB"
+  recommended_memory: "4GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+environment:
+  ANTHROPIC_BASE_URL: "http://localhost:8443"
+  OPENAI_BASE_URL: "http://localhost:8443"
+
+verify:
+  - command: "claude --version"
+    expect_exit_code: 0

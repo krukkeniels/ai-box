@@ -50,7 +50,19 @@
         "copy_file_range",
         "sendfile",
         "splice",
-        "tee"
+        "tee",
+        "capget",
+        "capset",
+        "setuid",
+        "setgid",
+        "setreuid",
+        "setregid",
+        "setresuid",
+        "setresgid",
+        "getresuid",
+        "getresgid",
+        "initgroups",
+        "faccessat2"
       ],
       "action": "SCMP_ACT_ALLOW",
       "comment": "File I/O: standard filesystem operations needed by all dev tooling (Java, Node, Python, Git, Maven, Gradle, npm)"

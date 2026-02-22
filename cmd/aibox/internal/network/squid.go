@@ -7,17 +7,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // DefaultAllowedDomains is the base set of domains that AI-Box containers can reach.
-var DefaultAllowedDomains = []string{
+// This includes both internal infrastructure and curated external IDE domains.
+var DefaultAllowedDomains = append(InternalDomains, IDEDomains...)
+
+// InternalDomains are the organization's internal infrastructure domains.
+var InternalDomains = []string{
 	"harbor.internal",  // Container image registry
 	"nexus.internal",   // Package mirrors (npm, Maven, PyPI, NuGet, Go, Cargo)
 	"foundry.internal", // LLM API gateway
 	"git.internal",     // Source repos and policy repo
 	"vault.internal",   // Credential management and secret storage
+}
+
+// IDEDomains are curated external domains required for IDE integration (Phase 4).
+// These are explicitly approved for VS Code Marketplace and JetBrains Gateway.
+var IDEDomains = []string{
+	"update.code.visualstudio.com", // VS Code update/version API
+	"az764295.vo.msecnd.net",       // VS Code extension marketplace CDN
+	"marketplace.visualstudio.com", // VS Code extension marketplace
+	"vscode.blob.core.windows.net", // VS Code server binaries
+	"download.jetbrains.com",       // JetBrains Gateway backend downloads
 }
 
 // SquidConfig holds the configuration for the Squid proxy.
@@ -186,7 +201,7 @@ func (m *SquidManager) WriteConfig(path string) error {
 
 // IsRunning checks whether Squid is listening on the configured address and port.
 func (m *SquidManager) IsRunning() bool {
-	addr := fmt.Sprintf("%s:%d", m.cfg.ListenAddr, m.cfg.ListenPort)
+	addr := net.JoinHostPort(m.cfg.ListenAddr, strconv.Itoa(m.cfg.ListenPort))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		return false
@@ -197,7 +212,7 @@ func (m *SquidManager) IsRunning() bool {
 
 // HealthCheck verifies that Squid is running and accepting TCP connections.
 func (m *SquidManager) HealthCheck() error {
-	addr := fmt.Sprintf("%s:%d", m.cfg.ListenAddr, m.cfg.ListenPort)
+	addr := net.JoinHostPort(m.cfg.ListenAddr, strconv.Itoa(m.cfg.ListenPort))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		return fmt.Errorf("squid health check failed (cannot connect to %s): %w", addr, err)

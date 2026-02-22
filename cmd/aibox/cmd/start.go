@@ -15,7 +15,11 @@ import (
 	"github.com/aibox/aibox/internal/config"
 	"github.com/aibox/aibox/internal/container"
 	"github.com/aibox/aibox/internal/credentials"
+	"github.com/aibox/aibox/internal/dotfiles"
+	"github.com/aibox/aibox/internal/mcppacks"
 	"github.com/aibox/aibox/internal/policy"
+	"github.com/aibox/aibox/internal/setup"
+	"github.com/aibox/aibox/internal/toolpacks"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +42,7 @@ func init() {
 	startCmd.Flags().Int("cpus", 0, "CPU limit (overrides config)")
 	startCmd.Flags().String("memory", "", "memory limit, e.g. 8g (overrides config)")
 	startCmd.Flags().String("toolpacks", "", "comma-separated tool packs to activate (e.g. bazel@7,node@20)")
+	startCmd.Flags().String("profile", "", "resource profile: 'jetbrains' sets 4+ CPUs, 8+ GB RAM")
 
 	_ = startCmd.MarkFlagRequired("workspace")
 
@@ -49,23 +54,24 @@ func runStart(cmd *cobra.Command, args []string) error {
 	image, _ := cmd.Flags().GetString("image")
 	cpus, _ := cmd.Flags().GetInt("cpus")
 	memory, _ := cmd.Flags().GetString("memory")
-	toolpacks, _ := cmd.Flags().GetString("toolpacks")
+	toolpacksFlag, _ := cmd.Flags().GetString("toolpacks")
+	profile, _ := cmd.Flags().GetString("profile")
 
-	// Validate and report requested tool packs.
-	if toolpacks != "" {
-		packs := strings.Split(toolpacks, ",")
+	// Validate requested tool packs upfront.
+	var requestedPacks []struct{ name, version string }
+	if toolpacksFlag != "" {
+		packs := strings.Split(toolpacksFlag, ",")
 		for _, pack := range packs {
 			pack = strings.TrimSpace(pack)
 			if pack == "" {
 				continue
 			}
-			parts := strings.SplitN(pack, "@", 2)
-			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			name, version := toolpacks.ParsePackRef(pack)
+			if name == "" || version == "" {
 				return fmt.Errorf("invalid tool pack format %q: expected name@version (e.g. bazel@7)", pack)
 			}
+			requestedPacks = append(requestedPacks, struct{ name, version string }{name, version})
 		}
-		fmt.Printf("Requested tool packs: %s\n", toolpacks)
-		fmt.Println("Note: tool pack runtime installation will be available in Phase 2.")
 	}
 
 	// Validate workspace early so the user gets a clear error before we
@@ -138,18 +144,87 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Regenerate MCP config from enabled packs (Phase 4).
+	if mcpHomeDir, mcpErr := config.ResolveHomeDir(); mcpErr == nil {
+		mcpState, stateErr := mcppacks.LoadState(mcpHomeDir)
+		if stateErr == nil && len(mcpState.Enabled) > 0 {
+			if genErr := mcppacks.GenerateConfig(mcpHomeDir, mcpState.Enabled); genErr != nil {
+				slog.Warn("failed to regenerate MCP config", "error", genErr)
+			}
+		}
+	}
+
+	// Read SSH public key for container injection (Phase 4).
+	var sshPubKey []byte
+	pubKey, err := setup.ReadPublicKey()
+	if err != nil {
+		slog.Warn("SSH key not found; run 'aibox setup' to generate one for IDE access", "error", err)
+	} else {
+		sshPubKey = pubKey
+	}
+
 	mgr, err := container.NewManager(Cfg)
 	if err != nil {
 		return err
 	}
 
-	return mgr.Start(container.StartOpts{
+	if err := mgr.Start(container.StartOpts{
 		Workspace:   workspace,
 		Image:       image,
 		CPUs:        cpus,
 		Memory:      memory,
 		CredEnvVars: credEnvVars,
-	})
+		Profile:     profile,
+		SSHPubKey:   sshPubKey,
+		SSHPort:     Cfg.IDE.SSHPort,
+	}); err != nil {
+		return err
+	}
+
+	// Write/update SSH config for IDE access.
+	if err := setup.WriteSSHConfig(Cfg.IDE.SSHPort); err != nil {
+		slog.Warn("failed to update SSH config; manually configure your IDE", "error", err)
+	}
+
+	// Dotfiles sync (Phase 4).
+	// Clone/update the user's dotfiles repo into the container's persistent
+	// home volume, configure default shell, and source aibox-env.sh.
+	if Cfg.Dotfiles.Repo != "" {
+		statusInfo, statusErr := mgr.Status()
+		if statusErr != nil {
+			slog.Warn("could not get container status for dotfiles sync", "error", statusErr)
+		} else {
+			if err := dotfiles.Sync(dotfiles.SyncOpts{
+				RuntimePath:   mgr.RuntimePath,
+				ContainerName: statusInfo.Name,
+				RepoURL:       Cfg.Dotfiles.Repo,
+				Shell:         Cfg.Shell,
+			}); err != nil {
+				slog.Warn("dotfiles sync failed", "error", err)
+			}
+		}
+	}
+
+	// Install requested tool packs into the running container (Phase 4).
+	if len(requestedPacks) > 0 {
+		packsDir := toolpacks.DefaultPacksDir()
+		registry := toolpacks.NewRegistry(packsDir, "/opt/toolpacks")
+
+		statusInfo, statusErr := mgr.Status()
+		if statusErr != nil {
+			slog.Warn("could not get container status for tool pack install", "error", statusErr)
+		} else {
+			installer := toolpacks.NewInstaller(mgr.RuntimePath, statusInfo.Name, registry)
+			for _, rp := range requestedPacks {
+				if installErr := installer.Install(rp.name, rp.version); installErr != nil {
+					slog.Warn("tool pack install failed", "pack", rp.name+"@"+rp.version, "error", installErr)
+					fmt.Printf("WARNING: failed to install %s@%s: %v\n", rp.name, rp.version, installErr)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // loadAndMergePolicy loads the three-level policy hierarchy, validates each

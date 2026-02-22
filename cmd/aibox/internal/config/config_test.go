@@ -22,17 +22,20 @@ func TestDefaultValues(t *testing.T) {
 		got  interface{}
 		want interface{}
 	}{
+		{"config_version", cfg.ConfigVersion, 1},
 		{"runtime", cfg.Runtime, "podman"},
-		{"image", cfg.Image, "harbor.internal/aibox/base:24.04"},
-		{"gvisor.enabled", cfg.GVisor.Enabled, true},
+		{"image", cfg.Image, "ghcr.io/krukkeniels/aibox/base:24.04"},
+		{"gvisor.enabled", cfg.GVisor.Enabled, false},
 		{"gvisor.platform", cfg.GVisor.Platform, "systrap"},
 		{"resources.cpus", cfg.Resources.CPUs, 4},
 		{"resources.memory", cfg.Resources.Memory, "8g"},
 		{"resources.tmp_size", cfg.Resources.TmpSize, "2g"},
 		{"workspace.default_path", cfg.Workspace.DefaultPath, "."},
 		{"workspace.validate_fs", cfg.Workspace.ValidateFS, true},
-		{"registry.url", cfg.Registry.URL, "harbor.internal"},
-		{"registry.verify_signatures", cfg.Registry.VerifySignatures, true},
+		{"registry.url", cfg.Registry.URL, "ghcr.io/krukkeniels/aibox"},
+		{"registry.verify_signatures", cfg.Registry.VerifySignatures, false},
+		{"network.enabled", cfg.Network.Enabled, false},
+		{"audit.enabled", cfg.Audit.Enabled, false},
 		{"logging.format", cfg.Logging.Format, "text"},
 		{"logging.level", cfg.Logging.Level, "info"},
 	}

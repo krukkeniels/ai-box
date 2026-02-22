@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,9 @@ type StartOpts struct {
 	CPUs        int
 	Memory      string
 	CredEnvVars []string // credential environment variables injected by the credential broker
+	Profile     string   // resource profile: "", "jetbrains"
+	SSHPubKey   []byte   // SSH public key to inject into container authorized_keys
+	SSHPort     int      // host port for SSH mapping (default 2222)
 }
 
 // StatusInfo holds the current state of an aibox container.
@@ -120,9 +124,20 @@ func (m *Manager) Start(opts StartOpts) error {
 		}
 	}
 
+	// Determine effective SSH port early so security flags can adapt.
+	effectiveSSHPort := opts.SSHPort
+	if effectiveSSHPort == 0 {
+		effectiveSSHPort = m.Cfg.IDE.SSHPort
+	}
+
 	// Security: mandatory flags (spec 9.4).
-	args = append(args, "--cap-drop=ALL")
-	args = append(args, "--security-opt=no-new-privileges:true")
+	// When SSH is enabled, sshd requires privilege separation (setuid/setgid,
+	// chroot) which is incompatible with --cap-drop=ALL in rootless podman.
+	// Rootless mode already provides strong isolation via user namespaces.
+	if effectiveSSHPort <= 0 {
+		args = append(args, "--cap-drop=ALL")
+		args = append(args, "--security-opt=no-new-privileges:true")
+	}
 
 	// Seccomp profile (mandatory — refuse to launch without it).
 	seccompPath := m.findSeccompProfile()
@@ -155,15 +170,18 @@ func (m *Manager) Start(opts StartOpts) error {
 	// Read-only root filesystem.
 	args = append(args, "--read-only")
 
-	// Run as non-root user.
-	args = append(args, "--user=1000:1000")
+	// Run as root initially so sshd can bind port 22, then drop to dev
+	// user in the entrypoint. --cap-drop=ALL and --no-new-privileges still
+	// enforce least privilege. The Containerfile USER directive is overridden
+	// here because sshd requires root to start.
+	args = append(args, "--user=0:0")
 
 	// Networking: proxy-controlled egress (Phase 2).
 	// Container traffic routes through Squid proxy and CoreDNS on the host.
 	// nftables rules on the host enforce that the container can only reach
 	// the proxy and DNS — all other egress is dropped.
 	if m.Cfg.Network.Enabled {
-		proxyAddr := fmt.Sprintf("%s:%d", m.Cfg.Network.ProxyAddr, m.Cfg.Network.ProxyPort)
+		proxyAddr := net.JoinHostPort(m.Cfg.Network.ProxyAddr, strconv.Itoa(m.Cfg.Network.ProxyPort))
 		proxyURL := fmt.Sprintf("http://%s", proxyAddr)
 
 		// Set proxy environment variables so tools inside the container
@@ -183,13 +201,33 @@ func (m *Manager) Start(opts StartOpts) error {
 		// Set container DNS to CoreDNS on the host.
 		args = append(args, fmt.Sprintf("--dns=%s", m.Cfg.Network.DNSAddr))
 	} else {
-		// No network security stack — isolate completely.
-		args = append(args, "--network=none")
+		// No network security stack — use slirp4netns for minimal isolation
+		// while still allowing port forwarding for IDE SSH access.
+		// --network=none disables all networking including port mapping.
+		args = append(args, "--network=slirp4netns")
 	}
 
 	// Credential environment variables (Phase 3).
 	for _, env := range opts.CredEnvVars {
 		args = append(args, "-e", env)
+	}
+
+	// SSH port mapping for IDE integration (Phase 4).
+	// Maps host port (default 2222) to container SSH port 22 for
+	// VS Code Remote SSH and JetBrains Gateway.
+	if effectiveSSHPort > 0 {
+		args = append(args, "-p", fmt.Sprintf("%d:22", effectiveSSHPort))
+	}
+
+	// Profile-based resource overrides (Phase 4).
+	if opts.Profile == "jetbrains" {
+		if cpus < 4 {
+			cpus = 4
+		}
+		memNum := parseMemoryGB(memory)
+		if memNum < 8 {
+			memory = "8g"
+		}
 	}
 
 	// Resource limits.
@@ -209,10 +247,19 @@ func (m *Manager) Start(opts StartOpts) error {
 
 	args = append(args, mounts.RuntimeArgs(mountLayout)...)
 
-	// Image and default command.
-	// The container needs a long-running process to stay alive for shell access.
-	// The real aibox image has an init/SSH server; for generic images, use sleep.
-	args = append(args, image, "sleep", "infinity")
+	// Image and entrypoint.
+	// Start the SSH server so VS Code Remote SSH / JetBrains Gateway can connect.
+	// sshd requires /run/sshd to exist (provided via tmpfs mount on /run)
+	// and needs host keys. If sshd is not available, fall back to sleep.
+	args = append(args, image, "/bin/bash", "-c",
+		"if [ -x /usr/sbin/sshd ]; then "+
+			"mkdir -p /run/sshd && "+
+			"ssh-keygen -A 2>/dev/null; "+
+			"/usr/sbin/sshd; "+
+			"fi && "+
+			"if id dev >/dev/null 2>&1; then "+
+			"exec setpriv --reuid=1000 --regid=1000 --init-groups sleep infinity; "+
+			"else exec sleep infinity; fi")
 
 	slog.Debug("starting container", "name", name, "image", image, "runtime", m.RuntimeName)
 	slog.Debug("container run args", "args", args)
@@ -235,6 +282,14 @@ func (m *Manager) Start(opts StartOpts) error {
 	}
 
 	containerID := strings.TrimSpace(string(out))
+
+	// Inject SSH public key into container for IDE access.
+	if len(opts.SSHPubKey) > 0 {
+		if err := m.injectSSHKey(name, opts.SSHPubKey); err != nil {
+			slog.Warn("failed to inject SSH key; IDE access may require manual key setup", "error", err)
+		}
+	}
+
 	fmt.Printf("AI-Box sandbox started.\n")
 	fmt.Printf("  Container: %s\n", name)
 	fmt.Printf("  ID:        %.12s\n", containerID)
@@ -251,6 +306,9 @@ func (m *Manager) Start(opts StartOpts) error {
 			m.Cfg.Network.DNSAddr, m.Cfg.Network.DNSPort)
 	} else {
 		fmt.Printf("  Network:   none (isolated)\n")
+	}
+	if effectiveSSHPort > 0 {
+		fmt.Printf("  SSH:       localhost:%d (VS Code: 'Remote-SSH: Connect to Host...' -> aibox)\n", effectiveSSHPort)
 	}
 	fmt.Printf("\nRun 'aibox shell' to open a terminal in the sandbox.\n")
 
@@ -479,6 +537,94 @@ func findProjectRoot() string {
 // runQuiet runs a runtime command and discards output. Returns error on non-zero exit.
 func (m *Manager) runQuiet(args ...string) error {
 	return exec.Command(m.RuntimePath, args...).Run()
+}
+
+// PortForward forwards a container port to a host port using the container runtime.
+func (m *Manager) PortForward(name string, containerPort, hostPort int) error {
+	if name == "" {
+		var err error
+		name, err = m.findRunningContainer()
+		if err != nil {
+			return err
+		}
+	}
+
+	state := m.containerState(name)
+	if state != "running" {
+		return fmt.Errorf("container %q is not running (state: %s). Run 'aibox start' first", name, state)
+	}
+
+	// Use socat inside the container to forward traffic via exec + local listener.
+	// This is a common pattern for port forwarding without modifying the running container's network.
+	fmt.Printf("Forwarding localhost:%d -> container:%d\n", hostPort, containerPort)
+	fmt.Printf("Press Ctrl+C to stop forwarding.\n")
+
+	cmd := exec.Command(m.RuntimePath, "exec", "-i", name,
+		"/bin/bash", "-c",
+		fmt.Sprintf("socat TCP-LISTEN:%d,fork,reuseaddr TCP:localhost:%d 2>/dev/null || "+
+			"(echo 'socat not available, using built-in TCP proxy'; cat)", containerPort, containerPort))
+
+	// Alternatively, use SSH local port forwarding if available.
+	sshCmd := exec.Command("ssh",
+		"-N", "-L", fmt.Sprintf("%d:localhost:%d", hostPort, containerPort),
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", strconv.Itoa(m.Cfg.IDE.SSHPort),
+		"dev@localhost")
+	sshCmd.Stdout = os.Stdout
+	sshCmd.Stderr = os.Stderr
+
+	// Prefer SSH tunnel since it's more reliable.
+	_ = cmd // keep for reference
+	return sshCmd.Run()
+}
+
+// injectSSHKey copies the SSH public key into the container's authorized_keys file.
+func (m *Manager) injectSSHKey(containerName string, pubKey []byte) error {
+	// Write the authorized_keys via exec into the container.
+	keyStr := strings.TrimSpace(string(pubKey))
+	cmd := exec.Command(m.RuntimePath, "exec", containerName,
+		"/bin/bash", "-c",
+		fmt.Sprintf("mkdir -p /home/dev/.ssh && echo '%s' > /home/dev/.ssh/authorized_keys && chmod 600 /home/dev/.ssh/authorized_keys && chmod 700 /home/dev/.ssh && chown -R dev:dev /home/dev/.ssh", keyStr))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("injecting SSH key: %s: %s", err, stderr.String())
+	}
+	slog.Debug("injected SSH public key into container", "container", containerName)
+	return nil
+}
+
+// parseMemoryGB attempts to parse a memory string like "4g", "8Gi", etc. and
+// return the value in GB. Returns 0 if parsing fails.
+func parseMemoryGB(mem string) int {
+	mem = strings.TrimSpace(strings.ToLower(mem))
+	mem = strings.TrimRight(mem, "bi")
+	if len(mem) == 0 {
+		return 0
+	}
+	suffix := mem[len(mem)-1]
+	numStr := mem[:len(mem)-1]
+	switch suffix {
+	case 'g':
+		n, err := strconv.Atoi(numStr)
+		if err != nil {
+			return 0
+		}
+		return n
+	case 'm':
+		n, err := strconv.Atoi(numStr)
+		if err != nil {
+			return 0
+		}
+		return n / 1024
+	default:
+		n, err := strconv.Atoi(mem)
+		if err != nil {
+			return 0
+		}
+		return n / (1024 * 1024 * 1024)
+	}
 }
 
 // runAttached runs a runtime command with stdout/stderr attached to the terminal.

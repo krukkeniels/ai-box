@@ -8,7 +8,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var systemSetup bool
+var (
+	systemSetup bool
+	forceSetup  bool
+	offlineMode bool
+)
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
@@ -27,11 +31,17 @@ There are two phases:
 
   aibox setup            (no root needed, run by each developer)
     Sets up the user environment:
+    - Runs pre-flight checks (OS, RAM, disk, runtime)
     - Detects and verifies the container runtime (Podman/Docker)
     - Checks gVisor (runsc) installation
     - Creates default config at ~/.config/aibox/config.yaml
+    - Generates SSH keys for IDE access
     - Pulls and verifies the base container image
-    - Warns if system setup has not been completed
+    - Runs health checks
+
+Flags:
+  --force    Re-run all steps regardless of existing state
+  --offline  Skip steps that require network access
 
 On WSL2, setup additionally:
   - Checks WSL2 kernel version (5.15+ required for gVisor systrap)
@@ -42,6 +52,8 @@ On WSL2, setup additionally:
 
 func init() {
 	setupCmd.Flags().BoolVar(&systemSetup, "system", false, "run privileged system-level setup (requires root)")
+	setupCmd.Flags().BoolVar(&forceSetup, "force", false, "re-run all steps regardless of existing state")
+	setupCmd.Flags().BoolVar(&offlineMode, "offline", false, "skip steps that require network access")
 	rootCmd.AddCommand(setupCmd)
 }
 
@@ -52,6 +64,11 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported host OS: %s. AI-Box requires Linux (native or WSL2)", hostInfo.OS)
 	}
 
+	opts := setup.SetupOptions{
+		Force:   forceSetup,
+		Offline: offlineMode,
+	}
+
 	if hostInfo.IsWSL2 {
 		return setup.WSL2Setup(Cfg)
 	}
@@ -60,5 +77,5 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		return setup.SystemSetup(Cfg)
 	}
 
-	return setup.UserSetup(Cfg)
+	return setup.UserSetupWithOptions(Cfg, opts)
 }

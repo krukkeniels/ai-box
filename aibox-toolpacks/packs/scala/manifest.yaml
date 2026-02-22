@@ -1,0 +1,42 @@
+name: scala
+version: "3"
+description: "Scala 3.x, sbt 1.x, Metals LSP"
+maintainer: platform-team
+tags:
+  - language
+  - jvm
+  - scala
+
+install:
+  method: script
+  script: install.sh
+
+dependencies:
+  - name: java
+    version: "21"
+
+network:
+  requires:
+    - id: coursier
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/scala"
+  caches:
+    - "$HOME/.cache/coursier"
+    - "$HOME/.sbt"
+
+resources:
+  min_memory: "4GB"
+  recommended_memory: "8GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+verify:
+  - command: "scala -version"
+    expect_exit_code: 0
+  - command: "sbt --version"
+    expect_exit_code: 0

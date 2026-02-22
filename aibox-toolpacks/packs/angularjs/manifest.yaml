@@ -1,0 +1,42 @@
+name: angularjs
+version: "1"
+description: "Legacy AngularJS 1.x build tools (Node 18, Bower, Grunt/Gulp, Karma/Protractor)"
+maintainer: platform-team
+tags:
+  - framework
+  - javascript
+  - frontend
+  - legacy
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: npm-registry
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/angularjs"
+  caches:
+    - "$HOME/.npm"
+    - "$HOME/.cache/bower"
+
+resources:
+  min_memory: "2GB"
+  recommended_memory: "4GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+environment:
+  ANGULARJS_NODE_VERSION: "18"
+
+verify:
+  - command: "node --version"
+    expect_exit_code: 0
+  - command: "bower --version"
+    expect_exit_code: 0

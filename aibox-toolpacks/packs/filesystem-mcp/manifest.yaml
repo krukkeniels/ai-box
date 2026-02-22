@@ -1,0 +1,12 @@
+name: filesystem-mcp
+version: "1.0.0"
+description: "File operations sandboxed to /workspace"
+command: aibox-mcp-filesystem
+args:
+  - "--root"
+  - "/workspace"
+filesystem_requires:
+  - /workspace
+permissions:
+  - read
+  - write

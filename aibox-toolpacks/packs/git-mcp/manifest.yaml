@@ -1,0 +1,13 @@
+name: git-mcp
+version: "1.0.0"
+description: "Git operations for repository management"
+command: aibox-mcp-git
+args:
+  - "--repo"
+  - "/workspace"
+network_requires:
+  - git.internal
+permissions:
+  - read
+  - write
+  - execute

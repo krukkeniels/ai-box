@@ -1,0 +1,36 @@
+name: python
+version: "3.12"
+description: "Python 3.12, pip, venv, setuptools"
+maintainer: platform-team
+tags:
+  - language
+  - python
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: pypi
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/python"
+  caches:
+    - "$HOME/.cache/pip"
+
+resources:
+  min_memory: "1GB"
+  recommended_memory: "2GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+verify:
+  - command: "python3.12 --version"
+    expect_exit_code: 0
+  - command: "pip3 --version"
+    expect_exit_code: 0

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/aibox/aibox/internal/network"
@@ -130,7 +131,7 @@ func checkNFTablesActive() networkCheckResult {
 func checkSquidReachable() networkCheckResult {
 	result := networkCheckResult{Name: "Squid Proxy"}
 
-	addr := fmt.Sprintf("%s:%d", Cfg.Network.ProxyAddr, Cfg.Network.ProxyPort)
+	addr := net.JoinHostPort(Cfg.Network.ProxyAddr, strconv.Itoa(Cfg.Network.ProxyPort))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		result.Status = "fail"
@@ -148,7 +149,7 @@ func checkSquidReachable() networkCheckResult {
 func checkCoreDNSReachable() networkCheckResult {
 	result := networkCheckResult{Name: "CoreDNS Resolver"}
 
-	addr := fmt.Sprintf("%s:%d", Cfg.Network.DNSAddr, Cfg.Network.DNSPort)
+	addr := net.JoinHostPort(Cfg.Network.DNSAddr, strconv.Itoa(Cfg.Network.DNSPort))
 	conn, err := net.DialTimeout("udp", addr, 3*time.Second)
 	if err != nil {
 		result.Status = "fail"
@@ -190,7 +191,7 @@ func checkCoreDNSReachable() networkCheckResult {
 func checkCoreDNSBlocking() networkCheckResult {
 	result := networkCheckResult{Name: "DNS Blocking"}
 
-	addr := fmt.Sprintf("%s:%d", Cfg.Network.DNSAddr, Cfg.Network.DNSPort)
+	addr := net.JoinHostPort(Cfg.Network.DNSAddr, strconv.Itoa(Cfg.Network.DNSPort))
 	resolver := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, netw, address string) (net.Conn, error) {
@@ -223,7 +224,7 @@ func checkAllowlistedAccess() networkCheckResult {
 	}
 
 	// Check that we can TCP connect to the proxy (basic connectivity test).
-	proxyAddr := fmt.Sprintf("%s:%d", Cfg.Network.ProxyAddr, Cfg.Network.ProxyPort)
+	proxyAddr := net.JoinHostPort(Cfg.Network.ProxyAddr, strconv.Itoa(Cfg.Network.ProxyPort))
 	conn, err := net.DialTimeout("tcp", proxyAddr, 3*time.Second)
 	if err != nil {
 		result.Status = "warn"

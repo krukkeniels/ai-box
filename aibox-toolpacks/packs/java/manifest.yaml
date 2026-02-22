@@ -1,0 +1,47 @@
+name: java
+version: "21"
+description: "OpenJDK 21 (Temurin), Gradle 8.5, Maven 3.9.6"
+maintainer: platform-team
+tags:
+  - language
+  - jvm
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: maven-central
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/java"
+    - "/usr/lib/jvm/java-21"
+  caches:
+    - "$HOME/.m2/repository"
+    - "$HOME/.gradle/caches"
+
+resources:
+  min_memory: "4GB"
+  recommended_memory: "8GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+environment:
+  JAVA_HOME: "/usr/lib/jvm/java-21"
+  GRADLE_HOME: "/opt/toolpacks/java/gradle"
+  MAVEN_HOME: "/opt/toolpacks/java/maven"
+
+verify:
+  - command: "java --version"
+    expect_exit_code: 0
+  - command: "javac --version"
+    expect_exit_code: 0
+  - command: "mvn --version"
+    expect_exit_code: 0
+  - command: "gradle --version"
+    expect_exit_code: 0

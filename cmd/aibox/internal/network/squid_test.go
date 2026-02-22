@@ -172,10 +172,34 @@ func TestGenerateConfig_NoArbitraryExternalDomains(t *testing.T) {
 	}
 }
 
-func TestDefaultAllowedDomains_InternalOnly(t *testing.T) {
-	for _, domain := range DefaultAllowedDomains {
+func TestInternalDomains_InternalOnly(t *testing.T) {
+	for _, domain := range InternalDomains {
 		if !strings.HasSuffix(domain, ".internal") {
-			t.Errorf("default domain %q should be internal-only (suffix .internal)", domain)
+			t.Errorf("internal domain %q should have suffix .internal", domain)
 		}
+	}
+}
+
+func TestIDEDomains_CuratedExternal(t *testing.T) {
+	// IDE domains are intentionally external but must be a known curated set.
+	knownIDEDomains := map[string]bool{
+		"update.code.visualstudio.com": true,
+		"az764295.vo.msecnd.net":       true,
+		"marketplace.visualstudio.com": true,
+		"vscode.blob.core.windows.net": true,
+		"download.jetbrains.com":       true,
+	}
+
+	for _, domain := range IDEDomains {
+		if !knownIDEDomains[domain] {
+			t.Errorf("IDE domain %q is not in the curated allowlist", domain)
+		}
+	}
+}
+
+func TestDefaultAllowedDomains_IncludesBothSets(t *testing.T) {
+	if len(DefaultAllowedDomains) != len(InternalDomains)+len(IDEDomains) {
+		t.Errorf("DefaultAllowedDomains has %d entries, expected %d (internal) + %d (IDE)",
+			len(DefaultAllowedDomains), len(InternalDomains), len(IDEDomains))
 	}
 }

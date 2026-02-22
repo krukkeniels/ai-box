@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/aibox/aibox/internal/config"
+	"github.com/aibox/aibox/internal/falco"
 	"github.com/aibox/aibox/internal/network"
 	"github.com/aibox/aibox/internal/security"
 )
@@ -54,6 +55,13 @@ func SystemSetup(cfg *config.Config) error {
 		)
 	}
 
+	// Phase 5: Audit and monitoring steps.
+	if cfg.Audit.FalcoEnabled {
+		steps = append(steps,
+			Step{"Deploy Falco rules and config", func() error { return configureFalco(cfg) }},
+		)
+	}
+
 	fmt.Println("AI-Box system setup (Linux) — requires root")
 	fmt.Println(strings.Repeat("-", 40))
 
@@ -69,36 +77,104 @@ func SystemSetup(cfg *config.Config) error {
 	return nil
 }
 
+// SetupOptions controls optional setup behavior.
+type SetupOptions struct {
+	Force   bool // re-run all steps regardless of existing state
+	Offline bool // skip steps that require network access
+}
+
 // UserSetup performs unprivileged setup that each developer runs. It verifies
 // host prerequisites, creates the user config, and pulls container images.
 // It warns (but does not fail) if system setup has not been completed.
 func UserSetup(cfg *config.Config) error {
+	return UserSetupWithOptions(cfg, SetupOptions{})
+}
+
+// UserSetupWithOptions performs user setup with configurable options.
+// It runs preflight checks first, then proceeds through the setup steps.
+func UserSetupWithOptions(cfg *config.Config, opts SetupOptions) error {
+	fmt.Println("AI-Box user setup (Linux)")
+	fmt.Println(strings.Repeat("=", 50))
+
+	// Step 1: Preflight checks.
+	fmt.Println()
+	fmt.Println("[1/7] Checking prerequisites...")
+	if err := PrintPreflight(); err != nil {
+		return fmt.Errorf("prerequisites not met: %w", err)
+	}
+	fmt.Println("  ... prerequisites OK")
+
 	if !IsSystemSetupDone() {
-		fmt.Println("WARNING: System setup has not been completed.")
+		fmt.Println()
+		fmt.Println("NOTE: System setup has not been completed.")
 		fmt.Println("  An administrator should run: sudo aibox setup --system")
 		fmt.Println("  Continuing with user setup...")
-		fmt.Println()
 	}
 
-	steps := []Step{
-		{"Detect container runtime", func() error { return checkRuntime(cfg.Runtime) }},
-		{"Check gVisor (runsc)", func() error { return checkGVisor(cfg) }},
-		{"Create default configuration", func() error { return createDefaultConfig() }},
-		{"Pull base image", func() error { return pullBaseImage(cfg) }},
+	// Steps 2-6: Core setup.
+	type numberedStep struct {
+		Num     int
+		Total   int
+		Name    string
+		Run     func() error
+		Network bool // true if this step requires network
 	}
 
-	fmt.Println("AI-Box user setup (Linux)")
-	fmt.Println(strings.Repeat("-", 40))
+	steps := []numberedStep{
+		{2, 7, "Detecting container runtime", func() error { return checkRuntime(cfg.Runtime) }, false},
+		{3, 7, "Verifying gVisor sandbox", func() error { return checkGVisor(cfg) }, false},
+		{4, 7, "Creating configuration", func() error {
+			if !opts.Force {
+				// Check if config already exists.
+				cfgPath, err := config.DefaultConfigPath()
+				if err == nil {
+					if _, serr := os.Stat(cfgPath); serr == nil {
+						fmt.Printf("  Config already exists at %s (use --force to overwrite)\n", cfgPath)
+						return nil
+					}
+				}
+			}
+			return createDefaultConfig()
+		}, false},
+		{5, 7, "Generating SSH keys", func() error {
+			if !opts.Force {
+				privPath, _, err := SSHKeyPaths()
+				if err == nil {
+					if _, serr := os.Stat(privPath); serr == nil {
+						fmt.Printf("  SSH keys already exist (use --force to regenerate)\n")
+						return nil
+					}
+				}
+			}
+			return GenerateSSHKeyPair()
+		}, false},
+		{6, 7, "Pulling base image", func() error {
+			if opts.Offline {
+				fmt.Println("  Skipped (--offline mode)")
+				return nil
+			}
+			return pullBaseImage(cfg)
+		}, true},
+	}
 
-	for i, step := range steps {
-		fmt.Printf("[%d/%d] %s ...\n", i+1, len(steps), step.Name)
+	for _, step := range steps {
+		fmt.Printf("\n[%d/%d] %s...\n", step.Num, step.Total, step.Name)
 		if err := step.Run(); err != nil {
 			return fmt.Errorf("step %q failed: %w", step.Name, err)
 		}
 	}
 
-	fmt.Println(strings.Repeat("-", 40))
-	fmt.Println("Setup complete. Run 'aibox doctor' to verify.")
+	// Step 7: Post-setup health check.
+	fmt.Printf("\n[7/7] Running health checks...\n")
+	fmt.Println("  Run 'aibox doctor' for detailed diagnostics.")
+
+	fmt.Println()
+	fmt.Println(strings.Repeat("=", 50))
+	fmt.Println("Setup complete!")
+	fmt.Println()
+	fmt.Println("  Next steps:")
+	fmt.Println("    aibox doctor    # detailed health check")
+	fmt.Println("    aibox start     # launch a sandbox")
 	return nil
 }
 
@@ -515,6 +591,63 @@ func configureCoreDNS(cfg *config.Config) error {
 	} else {
 		fmt.Println("  CoreDNS started")
 	}
+	return nil
+}
+
+// configureFalco deploys the AI-Box Falco rules and configuration, and
+// starts the Falco service. Requires root.
+func configureFalco(cfg *config.Config) error {
+	falcoCfg := falco.Config{
+		Enabled:    cfg.Audit.FalcoEnabled,
+		RulesPath:  "/etc/aibox/falco_rules.yaml",
+		ConfigPath: "/etc/aibox/falco.yaml",
+		AlertsPath: "/var/log/aibox/falco-alerts.jsonl",
+	}
+	mgr := falco.NewManager(falcoCfg)
+
+	// Check if Falco is installed.
+	if !mgr.IsInstalled() {
+		fmt.Println("  Falco not found, attempting to install...")
+		if err := mgr.Install(); err != nil {
+			fmt.Printf("  WARN: could not install Falco: %v\n", err)
+			fmt.Println("  Install manually: sudo apt-get install -y falco")
+			fmt.Println("  See: https://falco.org/docs/install-operate/installation/")
+			return nil
+		}
+	}
+
+	// Write AI-Box Falco rules.
+	if err := mgr.WriteRules(""); err != nil {
+		return fmt.Errorf("writing Falco rules: %w", err)
+	}
+	fmt.Printf("  Falco rules written to %s\n", falcoCfg.RulesPath)
+
+	// Write Falco deployment config.
+	if err := mgr.WriteConfig(""); err != nil {
+		return fmt.Errorf("writing Falco config: %w", err)
+	}
+	fmt.Printf("  Falco config written to %s\n", falcoCfg.ConfigPath)
+
+	// Ensure alert output directory exists.
+	if err := mgr.CheckFalcoAlertOutput(); err != nil {
+		fmt.Printf("  WARN: could not verify alert output directory: %v\n", err)
+	}
+
+	// Start or reload Falco.
+	if mgr.IsRunning() {
+		fmt.Println("  Falco already running, reloading rules")
+		if err := mgr.Reload(); err != nil {
+			fmt.Printf("  WARN: reload failed: %v\n", err)
+		}
+	} else {
+		if err := mgr.Start(); err != nil {
+			fmt.Printf("  WARN: could not start Falco: %v\n", err)
+			fmt.Println("  Start manually: sudo systemctl start falco")
+		} else {
+			fmt.Println("  Falco started")
+		}
+	}
+
 	return nil
 }
 

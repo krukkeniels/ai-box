@@ -36,6 +36,9 @@ ClientAliveCountMax 3
 SyslogFacility AUTH
 LogLevel INFO
 
+# SFTP subsystem (required for JetBrains Gateway and SCP transfers)
+Subsystem sftp /usr/lib/openssh/sftp-server
+
 # Misc
 PrintMotd no
 AcceptEnv LANG LC_*

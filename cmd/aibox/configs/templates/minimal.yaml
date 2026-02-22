@@ -1,0 +1,32 @@
+# AI-Box minimal config — open-source / personal use
+config_version: 1
+runtime: podman
+image: ghcr.io/krukkeniels/aibox/base:24.04
+
+gvisor:
+  enabled: false
+  platform: systrap
+
+resources:
+  cpus: 4
+  memory: 8g
+  tmp_size: 2g
+
+network:
+  enabled: false
+
+registry:
+  url: ghcr.io/krukkeniels/aibox
+  verify_signatures: false
+
+credentials:
+  mode: fallback
+
+logging:
+  format: text
+  level: info
+
+audit:
+  enabled: false
+
+shell: bash

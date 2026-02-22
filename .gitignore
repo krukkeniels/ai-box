@@ -1,0 +1,26 @@
+# Compiled binaries
+cmd/aibox/bin/aibox
+cmd/aibox-credential-helper/aibox-credential-helper
+cmd/aibox-llm-proxy/aibox-llm-proxy
+cmd/aibox-git-remote-helper/aibox-git-remote-helper
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

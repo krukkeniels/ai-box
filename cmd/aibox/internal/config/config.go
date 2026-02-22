@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"os/user"
@@ -29,16 +30,21 @@ func ResolveHomeDir() (string, error) {
 
 // Config is the top-level configuration for aibox.
 type Config struct {
-	Runtime     string            `yaml:"runtime" mapstructure:"runtime"`
-	Image       string            `yaml:"image" mapstructure:"image"`
-	GVisor      GVisorConfig      `yaml:"gvisor" mapstructure:"gvisor"`
-	Resources   ResourceConfig    `yaml:"resources" mapstructure:"resources"`
-	Workspace   WorkspaceConfig   `yaml:"workspace" mapstructure:"workspace"`
-	Registry    RegistryConfig    `yaml:"registry" mapstructure:"registry"`
-	Network     NetworkConfig     `yaml:"network" mapstructure:"network"`
-	Policy      PolicyConfig      `yaml:"policy" mapstructure:"policy"`
-	Credentials CredentialsConfig `yaml:"credentials" mapstructure:"credentials"`
-	Logging     LoggingConfig     `yaml:"logging" mapstructure:"logging"`
+	ConfigVersion int               `yaml:"config_version" mapstructure:"config_version"`
+	Runtime       string            `yaml:"runtime" mapstructure:"runtime"`
+	Image         string            `yaml:"image" mapstructure:"image"`
+	GVisor        GVisorConfig      `yaml:"gvisor" mapstructure:"gvisor"`
+	Resources     ResourceConfig    `yaml:"resources" mapstructure:"resources"`
+	Workspace     WorkspaceConfig   `yaml:"workspace" mapstructure:"workspace"`
+	Registry      RegistryConfig    `yaml:"registry" mapstructure:"registry"`
+	Network       NetworkConfig     `yaml:"network" mapstructure:"network"`
+	Policy        PolicyConfig      `yaml:"policy" mapstructure:"policy"`
+	Credentials   CredentialsConfig `yaml:"credentials" mapstructure:"credentials"`
+	Logging       LoggingConfig     `yaml:"logging" mapstructure:"logging"`
+	IDE           IDEConfig         `yaml:"ide" mapstructure:"ide"`
+	Dotfiles      DotfilesConfig    `yaml:"dotfiles" mapstructure:"dotfiles"`
+	Audit         AuditConfig       `yaml:"audit" mapstructure:"audit"`
+	Shell         string            `yaml:"shell" mapstructure:"shell"`
 }
 
 // GVisorConfig holds gVisor sandbox settings.
@@ -101,11 +107,42 @@ type LoggingConfig struct {
 	Level  string `yaml:"level" mapstructure:"level"`
 }
 
-// setDefaults registers sensible default values matching the spec.
+// IDEConfig holds IDE integration settings (Phase 4).
+type IDEConfig struct {
+	SSHPort int `yaml:"ssh_port" mapstructure:"ssh_port"` // host port mapped to container SSH (default 2222)
+}
+
+// DotfilesConfig holds dotfiles sync settings (Phase 4).
+type DotfilesConfig struct {
+	Repo string `yaml:"repo" mapstructure:"repo"` // Git URL for dotfiles repository
+}
+
+// AuditConfig holds audit, monitoring, and compliance settings (Phase 5).
+type AuditConfig struct {
+	Enabled             bool   `yaml:"enabled" mapstructure:"enabled"`                             // enable audit logging
+	StorageBackend      string `yaml:"storage_backend" mapstructure:"storage_backend"`             // minio, s3, or local
+	StorageEndpoint     string `yaml:"storage_endpoint" mapstructure:"storage_endpoint"`           // storage endpoint URL
+	StorageBucket       string `yaml:"storage_bucket" mapstructure:"storage_bucket"`               // bucket/container name
+	LogPath             string `yaml:"log_path" mapstructure:"log_path"`                           // local audit log path
+	VectorConfigPath    string `yaml:"vector_config_path" mapstructure:"vector_config_path"`       // Vector TOML config path
+	FalcoEnabled        bool   `yaml:"falco_enabled" mapstructure:"falco_enabled"`                 // enable Falco runtime monitoring
+	RecordingEnabled    bool   `yaml:"recording_enabled" mapstructure:"recording_enabled"`         // enable session recording
+	RecordingPolicy     string `yaml:"recording_policy" mapstructure:"recording_policy"`           // required, optional, or disabled
+	RecordingNoticeText string `yaml:"recording_notice_text" mapstructure:"recording_notice_text"` // jurisdiction-specific recording notice
+	RetentionTier1      string `yaml:"retention_tier1" mapstructure:"retention_tier1"`             // retention for lifecycle/policy/credential/tool events (default "730d")
+	RetentionTier2      string `yaml:"retention_tier2" mapstructure:"retention_tier2"`             // retention for network/DNS/LLM/file events (default "365d")
+	RequiredForRollout  bool   `yaml:"required_for_rollout" mapstructure:"required_for_rollout"`   // true for classified environments
+	ClassificationLevel string `yaml:"classification_level" mapstructure:"classification_level"`   // standard or classified
+	LLMLoggingMode      string `yaml:"llm_logging_mode" mapstructure:"llm_logging_mode"`           // full, hash, or metadata_only
+	RuntimeBackend      string `yaml:"runtime_backend" mapstructure:"runtime_backend"`             // falco, auditd, or none
+}
+
+// setDefaults registers sensible default values for open-source / personal use.
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("config_version", 1)
 	v.SetDefault("runtime", "podman")
-	v.SetDefault("image", "harbor.internal/aibox/base:24.04")
-	v.SetDefault("gvisor.enabled", true)
+	v.SetDefault("image", "ghcr.io/krukkeniels/aibox/base:24.04")
+	v.SetDefault("gvisor.enabled", false)
 	v.SetDefault("gvisor.platform", "systrap")
 	v.SetDefault("gvisor.require_apparmor", false)
 	v.SetDefault("resources.cpus", 4)
@@ -113,32 +150,45 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("resources.tmp_size", "2g")
 	v.SetDefault("workspace.default_path", ".")
 	v.SetDefault("workspace.validate_fs", true)
-	v.SetDefault("registry.url", "harbor.internal")
-	v.SetDefault("registry.verify_signatures", true)
-	v.SetDefault("network.enabled", true)
+	v.SetDefault("registry.url", "ghcr.io/krukkeniels/aibox")
+	v.SetDefault("registry.verify_signatures", false)
+	v.SetDefault("network.enabled", false)
 	v.SetDefault("network.proxy_addr", "127.0.0.1")
 	v.SetDefault("network.proxy_port", 3128)
 	v.SetDefault("network.dns_addr", "127.0.0.1")
 	v.SetDefault("network.dns_port", 53)
-	v.SetDefault("network.allowed_domains", []string{
-		"harbor.internal",
-		"nexus.internal",
-		"foundry.internal",
-		"git.internal",
-		"vault.internal",
-	})
-	v.SetDefault("network.llm_gateway", "foundry.internal")
+	v.SetDefault("network.allowed_domains", []string{})
+	v.SetDefault("network.llm_gateway", "")
 	v.SetDefault("policy.org_baseline_path", "/etc/aibox/org-policy.yaml")
 	v.SetDefault("policy.team_policy_path", "")
 	v.SetDefault("policy.project_policy_path", "aibox/policy.yaml")
 	v.SetDefault("policy.decision_log_path", "/var/log/aibox/decisions.jsonl")
 	v.SetDefault("policy.hot_reload_secs", 0)
 	v.SetDefault("credentials.mode", "fallback")
-	v.SetDefault("credentials.vault_addr", "https://vault.internal:8200")
-	v.SetDefault("credentials.spiffe_trust_domain", "aibox.org.internal")
-	v.SetDefault("credentials.spiffe_socket_path", "/run/spire/sockets/agent.sock")
+	v.SetDefault("credentials.vault_addr", "")
+	v.SetDefault("credentials.spiffe_trust_domain", "")
+	v.SetDefault("credentials.spiffe_socket_path", "")
 	v.SetDefault("logging.format", "text")
 	v.SetDefault("logging.level", "info")
+	v.SetDefault("ide.ssh_port", 2222)
+	v.SetDefault("dotfiles.repo", "")
+	v.SetDefault("audit.enabled", false)
+	v.SetDefault("audit.storage_backend", "local")
+	v.SetDefault("audit.storage_endpoint", "")
+	v.SetDefault("audit.storage_bucket", "aibox-audit")
+	v.SetDefault("audit.log_path", "/var/log/aibox/audit.jsonl")
+	v.SetDefault("audit.vector_config_path", "/etc/aibox/vector.toml")
+	v.SetDefault("audit.falco_enabled", false)
+	v.SetDefault("audit.recording_enabled", false)
+	v.SetDefault("audit.recording_policy", "disabled")
+	v.SetDefault("audit.recording_notice_text", "This session is being recorded for security and compliance purposes.")
+	v.SetDefault("audit.retention_tier1", "730d")
+	v.SetDefault("audit.retention_tier2", "365d")
+	v.SetDefault("audit.required_for_rollout", false)
+	v.SetDefault("audit.classification_level", "standard")
+	v.SetDefault("audit.llm_logging_mode", "hash")
+	v.SetDefault("audit.runtime_backend", "none")
+	v.SetDefault("shell", "bash")
 }
 
 // bindEnvVars binds environment variable overrides with AIBOX_ prefix.
@@ -146,6 +196,7 @@ func setDefaults(v *viper.Viper) {
 // explicitly bind nested keys to their AIBOX_ equivalents.
 func bindEnvVars(v *viper.Viper) {
 	bindings := map[string]string{
+		"config_version":           "AIBOX_CONFIG_VERSION",
 		"runtime":                  "AIBOX_RUNTIME",
 		"image":                    "AIBOX_IMAGE",
 		"gvisor.enabled":           "AIBOX_GVISOR_ENABLED",
@@ -175,6 +226,25 @@ func bindEnvVars(v *viper.Viper) {
 		"credentials.spiffe_socket_path":  "AIBOX_CREDENTIALS_SPIFFE_SOCKET_PATH",
 		"logging.format":           "AIBOX_LOGGING_FORMAT",
 		"logging.level":            "AIBOX_LOGGING_LEVEL",
+		"ide.ssh_port":             "AIBOX_IDE_SSH_PORT",
+		"dotfiles.repo":               "AIBOX_DOTFILES_REPO",
+		"audit.enabled":               "AIBOX_AUDIT_ENABLED",
+		"audit.storage_backend":       "AIBOX_AUDIT_STORAGE_BACKEND",
+		"audit.storage_endpoint":      "AIBOX_AUDIT_STORAGE_ENDPOINT",
+		"audit.storage_bucket":        "AIBOX_AUDIT_STORAGE_BUCKET",
+		"audit.log_path":              "AIBOX_AUDIT_LOG_PATH",
+		"audit.vector_config_path":    "AIBOX_AUDIT_VECTOR_CONFIG_PATH",
+		"audit.falco_enabled":         "AIBOX_AUDIT_FALCO_ENABLED",
+		"audit.recording_enabled":     "AIBOX_AUDIT_RECORDING_ENABLED",
+		"audit.recording_policy":      "AIBOX_AUDIT_RECORDING_POLICY",
+		"audit.recording_notice_text": "AIBOX_AUDIT_RECORDING_NOTICE_TEXT",
+		"audit.retention_tier1":       "AIBOX_AUDIT_RETENTION_TIER1",
+		"audit.retention_tier2":       "AIBOX_AUDIT_RETENTION_TIER2",
+		"audit.required_for_rollout":  "AIBOX_AUDIT_REQUIRED_FOR_ROLLOUT",
+		"audit.classification_level":  "AIBOX_AUDIT_CLASSIFICATION_LEVEL",
+		"audit.llm_logging_mode":      "AIBOX_AUDIT_LLM_LOGGING_MODE",
+		"audit.runtime_backend":       "AIBOX_AUDIT_RUNTIME_BACKEND",
+		"shell":                       "AIBOX_SHELL",
 	}
 	for key, env := range bindings {
 		_ = v.BindEnv(key, env)
@@ -242,6 +312,17 @@ func Load(configPath string) (*Config, error) {
 		return nil, err
 	}
 
+	// Run validation: errors are fatal, warnings are logged.
+	result := Validate(&cfg)
+	if result.HasWarnings() {
+		for _, w := range result.Warnings {
+			slog.Warn("config warning", "field", w.Field, "message", w.Message, "value", w.Value)
+		}
+	}
+	if result.HasErrors() {
+		return nil, fmt.Errorf("config validation failed:\n%s", result.String())
+	}
+
 	return &cfg, nil
 }
 
@@ -266,62 +347,12 @@ func WriteDefault(path string) (string, error) {
 		return "", err
 	}
 
-	content := `# AI-Box configuration
-# See: aibox --help
-
-runtime: podman
-image: harbor.internal/aibox/base:24.04
-
-gvisor:
-  enabled: true
-  platform: systrap        # systrap (default, best perf) or ptrace (broader compat)
-  require_apparmor: false  # if true, container start fails without AppArmor
-
-resources:
-  cpus: 4
-  memory: 8g
-  tmp_size: 2g
-
-workspace:
-  default_path: "."
-  validate_fs: true    # block NTFS-mounted workspaces on WSL2
-
-registry:
-  url: harbor.internal
-  verify_signatures: true
-
-network:
-  enabled: true
-  proxy_addr: "127.0.0.1"   # Squid proxy listen address
-  proxy_port: 3128           # Squid proxy port
-  dns_addr: "127.0.0.1"     # CoreDNS listen address
-  dns_port: 53               # CoreDNS port
-  allowed_domains:           # domains containers can reach
-    - harbor.internal
-    - nexus.internal
-    - foundry.internal
-    - git.internal
-    - vault.internal
-  llm_gateway: foundry.internal
-
-policy:
-  org_baseline_path: /etc/aibox/org-policy.yaml
-  # team_policy_path: ""                       # team policy file (optional)
-  project_policy_path: aibox/policy.yaml       # relative to workspace
-  decision_log_path: /var/log/aibox/decisions.jsonl
-  hot_reload_secs: 0                           # 0 = disabled; set to 300 for 5-min refresh
-
-credentials:
-  mode: fallback                               # "fallback" (env var) or "vault"
-  vault_addr: "https://vault.internal:8200"
-  spiffe_trust_domain: aibox.org.internal
-  spiffe_socket_path: /run/spire/sockets/agent.sock
-
-logging:
-  format: text         # text or json
-  level: info
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	// Use the minimal template as the default config.
+	content, err := GetTemplate("minimal")
+	if err != nil {
+		return "", fmt.Errorf("reading default template: %w", err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
 		return "", err
 	}
 

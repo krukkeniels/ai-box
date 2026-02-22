@@ -1,0 +1,37 @@
+name: powershell
+version: "7"
+description: "PowerShell Core 7.x modules and tooling"
+maintainer: platform-team
+tags:
+  - shell
+  - powershell
+  - dotnet
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: powershell-gallery
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/powershell"
+    - "/opt/microsoft/powershell/7"
+  caches:
+    - "$HOME/.cache/powershell"
+    - "$HOME/.local/share/powershell/Modules"
+
+resources:
+  min_memory: "1GB"
+  recommended_memory: "2GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+verify:
+  - command: "pwsh --version"
+    expect_exit_code: 0

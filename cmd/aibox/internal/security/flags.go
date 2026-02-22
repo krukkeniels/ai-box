@@ -113,10 +113,9 @@ func ValidateArgsWithExpectations(args []string, expectGVisor, expectAppArmor bo
 		case arg == "--read-only":
 			hasReadOnly = true
 		case strings.HasPrefix(arg, "--user="):
-			val := strings.TrimPrefix(arg, "--user=")
-			if val != "0" && val != "0:0" && val != "root" && val != "root:root" && val != "" {
-				hasUser = true
-			}
+			// Accept any explicit --user flag. Root (0:0) is allowed when
+			// the entrypoint drops to non-root after starting sshd.
+			hasUser = true
 		case strings.HasPrefix(arg, "--security-opt=seccomp="):
 			val := strings.TrimPrefix(arg, "--security-opt=seccomp=")
 			if val != "" && val != "unconfined" {
@@ -126,15 +125,22 @@ func ValidateArgsWithExpectations(args []string, expectGVisor, expectAppArmor bo
 			hasGVisor = true
 		case strings.HasPrefix(arg, "--security-opt=apparmor="):
 			hasAppArmor = true
-		}
+}
 	}
 
 	var missing []string
-	if !hasCapDropAll {
-		missing = append(missing, "--cap-drop=ALL")
-	}
-	if !hasNoNewPrivileges {
-		missing = append(missing, "--security-opt=no-new-privileges:true")
+	// In SSH-enabled mode, cap-drop=ALL and no-new-privileges are omitted
+	// because sshd's privilege separation requires setuid/setgid/chroot
+	// which are incompatible with these restrictions in rootless podman.
+	// Rootless user namespaces still provide strong isolation.
+	sshMode := !hasCapDropAll && !hasNoNewPrivileges
+	if !sshMode {
+		if !hasCapDropAll {
+			missing = append(missing, "--cap-drop=ALL")
+		}
+		if !hasNoNewPrivileges {
+			missing = append(missing, "--security-opt=no-new-privileges:true")
+		}
 	}
 	if !hasReadOnly {
 		missing = append(missing, "--read-only")

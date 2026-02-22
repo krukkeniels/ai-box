@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -150,7 +151,7 @@ func (m *CoreDNSManager) WriteCorefile(path string) error {
 
 // IsRunning checks whether CoreDNS is listening on the configured address and port.
 func (m *CoreDNSManager) IsRunning() bool {
-	addr := fmt.Sprintf("%s:%d", m.cfg.ListenAddr, m.cfg.ListenPort)
+	addr := net.JoinHostPort(m.cfg.ListenAddr, strconv.Itoa(m.cfg.ListenPort))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		// DNS is typically UDP; also try a UDP probe via the health endpoint.
@@ -162,7 +163,7 @@ func (m *CoreDNSManager) IsRunning() bool {
 
 // healthEndpointUp checks if the CoreDNS health HTTP endpoint responds.
 func (m *CoreDNSManager) healthEndpointUp() bool {
-	url := fmt.Sprintf("http://%s:%d/health", m.cfg.ListenAddr, m.cfg.HealthPort)
+	url := fmt.Sprintf("http://%s/health", net.JoinHostPort(m.cfg.ListenAddr, strconv.Itoa(m.cfg.HealthPort)))
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -180,7 +181,7 @@ func (m *CoreDNSManager) HealthCheck() error {
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(ctx, "udp", fmt.Sprintf("%s:%d", m.cfg.ListenAddr, m.cfg.ListenPort))
+			return d.DialContext(ctx, "udp", net.JoinHostPort(m.cfg.ListenAddr, strconv.Itoa(m.cfg.ListenPort)))
 		},
 	}
 

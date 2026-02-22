@@ -1,0 +1,147 @@
+# GoReleaser config for AI-Box multi-binary releases.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: aibox
+    binary: aibox
+    dir: cmd/aibox
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+  - id: aibox-credential-helper
+    binary: aibox-credential-helper
+    dir: cmd/aibox-credential-helper
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+  - id: aibox-llm-proxy
+    binary: aibox-llm-proxy
+    dir: cmd/aibox-llm-proxy
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+  - id: aibox-git-remote-helper
+    binary: aibox-git-remote-helper
+    dir: cmd/aibox-git-remote-helper
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "aibox_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+    artifacts: checksum
+
+sboms:
+  - artifacts: archive
+    cmd: syft
+    args:
+      - "${artifact}"
+      - "--output"
+      - "spdx-json=${document}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+  groups:
+    - title: Features
+      regexp: '^feat'
+    - title: Bug Fixes
+      regexp: '^fix'
+    - title: Performance
+      regexp: '^perf'
+    - title: Others
+      order: 999
+
+nfpms:
+  - id: packages
+    package_name: aibox
+    vendor: AI-Box
+    homepage: https://github.com/krukkeniels/ai-box
+    maintainer: AI-Box Team
+    description: Secure dev sandbox for agentic AI tools
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin
+
+release:
+  github:
+    owner: krukkeniels
+    name: ai-box

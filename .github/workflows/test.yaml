@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.23", "1.24"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+      - name: Lint all modules
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: cmd/aibox
+
+      - name: Lint aibox-credential-helper
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: cmd/aibox-credential-helper
+
+      - name: Lint aibox-llm-proxy
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: cmd/aibox-llm-proxy
+
+      - name: Lint aibox-git-remote-helper
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: cmd/aibox-git-remote-helper
+
+      - name: Test all modules
+        run: |
+          for mod in cmd/aibox cmd/aibox-credential-helper cmd/aibox-llm-proxy cmd/aibox-git-remote-helper; do
+            echo "==> Testing $mod"
+            (cd "$mod" && go test ./...)
+          done
+
+      - name: Build all binaries
+        run: |
+          for mod in cmd/aibox cmd/aibox-credential-helper cmd/aibox-llm-proxy cmd/aibox-git-remote-helper; do
+            echo "==> Building $mod"
+            (cd "$mod" && CGO_ENABLED=0 go build -o /dev/null ./)
+          done

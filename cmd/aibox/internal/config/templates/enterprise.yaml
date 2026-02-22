@@ -1,0 +1,75 @@
+# AI-Box enterprise config — full security stack
+config_version: 1
+runtime: podman
+image: harbor.internal/aibox/base:24.04
+
+gvisor:
+  enabled: true
+  platform: systrap
+  require_apparmor: false
+
+resources:
+  cpus: 4
+  memory: 8g
+  tmp_size: 2g
+
+workspace:
+  default_path: "."
+  validate_fs: true
+
+network:
+  enabled: true
+  proxy_addr: "127.0.0.1"
+  proxy_port: 3128
+  dns_addr: "127.0.0.1"
+  dns_port: 53
+  allowed_domains:
+    - harbor.internal
+    - nexus.internal
+    - foundry.internal
+    - git.internal
+    - vault.internal
+  llm_gateway: foundry.internal
+
+registry:
+  url: harbor.internal
+  verify_signatures: true
+
+policy:
+  org_baseline_path: /etc/aibox/org-policy.yaml
+  project_policy_path: aibox/policy.yaml
+  decision_log_path: /var/log/aibox/decisions.jsonl
+  hot_reload_secs: 0
+
+credentials:
+  mode: vault
+  vault_addr: "https://vault.internal:8200"
+  spiffe_trust_domain: aibox.org.internal
+  spiffe_socket_path: /run/spire/sockets/agent.sock
+
+logging:
+  format: json
+  level: info
+
+ide:
+  ssh_port: 2222
+
+audit:
+  enabled: true
+  storage_backend: minio
+  storage_endpoint: "https://minio.internal:9000"
+  storage_bucket: aibox-audit
+  log_path: /var/log/aibox/audit.jsonl
+  vector_config_path: /etc/aibox/vector.toml
+  falco_enabled: true
+  recording_enabled: true
+  recording_policy: required
+  recording_notice_text: "This session is being recorded for security and compliance purposes."
+  retention_tier1: "730d"
+  retention_tier2: "365d"
+  required_for_rollout: true
+  classification_level: classified
+  llm_logging_mode: full
+  runtime_backend: falco
+
+shell: bash

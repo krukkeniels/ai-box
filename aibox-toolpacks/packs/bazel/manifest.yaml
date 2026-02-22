@@ -1,0 +1,35 @@
+name: bazel
+version: "7"
+description: "Bazel 7.x via Bazelisk"
+maintainer: platform-team
+tags:
+  - build-tool
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: bazel-releases
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/bazel"
+    - "/usr/local/bin/bazel"
+  caches:
+    - "$HOME/.cache/bazel"
+    - "$HOME/.cache/bazelisk"
+
+resources:
+  min_memory: "4GB"
+  recommended_memory: "8GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+verify:
+  - command: "bazel --version"
+    expect_exit_code: 0

@@ -1,0 +1,588 @@
+package vector
+
+import (
+	"fmt"
+	"log/slog"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// joinQuoted formats a string slice as a comma-separated list of quoted strings.
+func joinQuoted(ss []string) string {
+	quoted := make([]string, len(ss))
+	for i, s := range ss {
+		quoted[i] = fmt.Sprintf("%q", s)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// VectorConfig holds the configuration for the Vector log agent.
+type VectorConfig struct {
+	ConfigPath     string // path to write vector.toml (default: /etc/aibox/vector.toml)
+	DataDir        string // Vector data directory for disk buffer (default: /var/lib/aibox/vector)
+	BufferMaxBytes int64  // max disk buffer in bytes (default: 500MB)
+	APIAddr        string // Vector API listen address for health checks (default: "127.0.0.1")
+	APIPort        int    // Vector API port (default: 8686)
+
+	// Sources
+	AuditLogPath    string // aibox audit log (default: /var/log/aibox/audit.jsonl)
+	ProxyLogPath    string // Squid proxy access log (default: /var/log/aibox/proxy-access.log)
+	DecisionLogPath string // OPA decision log (default: /var/log/aibox/decisions.jsonl)
+	FalcoAlertPath  string // Falco alert output (default: /var/log/aibox/falco-alerts.jsonl)
+
+	// Sink configuration
+	SinkType     string // siem sink type: "console", "file", "http", "s3" (default: "file")
+	SinkEndpoint string // sink endpoint URL (for http/s3 sinks)
+	SinkPath     string // sink file path (for file sink, default: /var/log/aibox/vector-out.jsonl)
+
+	// Enrichment
+	Hostname  string // hostname for event enrichment
+	Cluster   string // cluster/environment name (default: "default")
+
+	// Policy-driven configuration (from AuditConfig)
+	RuntimeBackend      string // "falco", "auditd", or "none" — controls runtime source (default: "falco")
+	LLMLoggingMode      string // "full", "hash", or "metadata_only" — controls LLM payload handling (default: "full")
+	ClassificationLevel string // "standard" or "classified" — enriches all events (default: "standard")
+}
+
+// DefaultVectorConfig returns a VectorConfig with sensible defaults.
+func DefaultVectorConfig() VectorConfig {
+	hostname, _ := os.Hostname()
+	return VectorConfig{
+		ConfigPath:      "/etc/aibox/vector.toml",
+		DataDir:         "/var/lib/aibox/vector",
+		BufferMaxBytes:  500 * 1024 * 1024, // 500 MB
+		APIAddr:         "127.0.0.1",
+		APIPort:         8686,
+		AuditLogPath:    "/var/log/aibox/audit.jsonl",
+		ProxyLogPath:    "/var/log/aibox/proxy-access.log",
+		DecisionLogPath: "/var/log/aibox/decisions.jsonl",
+		FalcoAlertPath:  "/var/log/aibox/falco-alerts.jsonl",
+		SinkType:            "file",
+		SinkPath:            "/var/log/aibox/vector-out.jsonl",
+		Hostname:            hostname,
+		Cluster:             "default",
+		RuntimeBackend:      "falco",
+		LLMLoggingMode:      "full",
+		ClassificationLevel: "standard",
+	}
+}
+
+// VectorManager manages Vector log agent configuration and lifecycle.
+type VectorManager struct {
+	cfg VectorConfig
+}
+
+// NewVectorManager creates a VectorManager, applying defaults for any zero-value fields.
+func NewVectorManager(cfg VectorConfig) *VectorManager {
+	defaults := DefaultVectorConfig()
+	if cfg.ConfigPath == "" {
+		cfg.ConfigPath = defaults.ConfigPath
+	}
+	if cfg.DataDir == "" {
+		cfg.DataDir = defaults.DataDir
+	}
+	if cfg.BufferMaxBytes <= 0 {
+		cfg.BufferMaxBytes = defaults.BufferMaxBytes
+	}
+	if cfg.APIAddr == "" {
+		cfg.APIAddr = defaults.APIAddr
+	}
+	if cfg.APIPort == 0 {
+		cfg.APIPort = defaults.APIPort
+	}
+	if cfg.AuditLogPath == "" {
+		cfg.AuditLogPath = defaults.AuditLogPath
+	}
+	if cfg.ProxyLogPath == "" {
+		cfg.ProxyLogPath = defaults.ProxyLogPath
+	}
+	if cfg.DecisionLogPath == "" {
+		cfg.DecisionLogPath = defaults.DecisionLogPath
+	}
+	if cfg.FalcoAlertPath == "" {
+		cfg.FalcoAlertPath = defaults.FalcoAlertPath
+	}
+	if cfg.SinkType == "" {
+		cfg.SinkType = defaults.SinkType
+	}
+	if cfg.SinkPath == "" {
+		cfg.SinkPath = defaults.SinkPath
+	}
+	if cfg.Hostname == "" {
+		cfg.Hostname = defaults.Hostname
+	}
+	if cfg.Cluster == "" {
+		cfg.Cluster = defaults.Cluster
+	}
+	if cfg.RuntimeBackend == "" {
+		cfg.RuntimeBackend = defaults.RuntimeBackend
+	}
+	if cfg.LLMLoggingMode == "" {
+		cfg.LLMLoggingMode = defaults.LLMLoggingMode
+	}
+	if cfg.ClassificationLevel == "" {
+		cfg.ClassificationLevel = defaults.ClassificationLevel
+	}
+	return &VectorManager{cfg: cfg}
+}
+
+// Config returns the current VectorConfig (read-only copy).
+func (m *VectorManager) Config() VectorConfig {
+	return m.cfg
+}
+
+// GenerateConfig produces a complete Vector TOML configuration for the
+// AI-Box log collection pipeline. Sources collect from all AI-Box
+// components, transforms enrich and normalize events, and sinks ship
+// to the configured destination.
+func (m *VectorManager) GenerateConfig() string {
+	var b strings.Builder
+
+	b.WriteString("# =============================================================================\n")
+	b.WriteString("# AI-Box Vector Log Collection Pipeline\n")
+	b.WriteString("# Generated by aibox — DO NOT EDIT MANUALLY\n")
+	b.WriteString("#\n")
+	b.WriteString("# Collects events from all AI-Box components, normalizes them into a common\n")
+	b.WriteString("# schema, and ships them to the configured sink (SIEM, immutable store, etc.)\n")
+	b.WriteString("# =============================================================================\n\n")
+
+	// --- Data directory ---
+	b.WriteString("# ---- Global ------------------------------------------------------------------\n")
+	fmt.Fprintf(&b, "data_dir = %q\n\n", m.cfg.DataDir)
+
+	// --- API ---
+	b.WriteString("# ---- API (health checks) -----------------------------------------------------\n")
+	b.WriteString("[api]\n")
+	b.WriteString("  enabled = true\n")
+	fmt.Fprintf(&b, "  address = \"%s:%d\"\n\n", m.cfg.APIAddr, m.cfg.APIPort)
+
+	// --- Sources ---
+	b.WriteString("# ---- Sources -----------------------------------------------------------------\n\n")
+
+	// Audit log source (main structured event stream).
+	b.WriteString("# AI-Box audit events (structured JSON Lines from all components)\n")
+	b.WriteString("[sources.aibox_audit]\n")
+	b.WriteString("  type = \"file\"\n")
+	fmt.Fprintf(&b, "  include = [%q]\n", m.cfg.AuditLogPath)
+	b.WriteString("  read_from = \"beginning\"\n")
+	b.WriteString("  fingerprint.strategy = \"checksum\"\n")
+	b.WriteString("  line_delimiter = \"\\n\"\n\n")
+
+	// Squid proxy access log source.
+	b.WriteString("# Squid proxy access logs (network connections allowed + denied)\n")
+	b.WriteString("[sources.squid_proxy]\n")
+	b.WriteString("  type = \"file\"\n")
+	fmt.Fprintf(&b, "  include = [%q]\n", m.cfg.ProxyLogPath)
+	b.WriteString("  read_from = \"beginning\"\n")
+	b.WriteString("  fingerprint.strategy = \"checksum\"\n\n")
+
+	// OPA decision log source.
+	b.WriteString("# OPA policy decision logs\n")
+	b.WriteString("[sources.opa_decisions]\n")
+	b.WriteString("  type = \"file\"\n")
+	fmt.Fprintf(&b, "  include = [%q]\n", m.cfg.DecisionLogPath)
+	b.WriteString("  read_from = \"beginning\"\n")
+	b.WriteString("  fingerprint.strategy = \"checksum\"\n\n")
+
+	// Runtime security source — conditional on RuntimeBackend config.
+	switch m.cfg.RuntimeBackend {
+	case "falco":
+		b.WriteString("# Falco runtime security alerts (JSON Lines from eBPF driver)\n")
+		b.WriteString("[sources.falco_alerts]\n")
+		b.WriteString("  type = \"file\"\n")
+		fmt.Fprintf(&b, "  include = [%q]\n", m.cfg.FalcoAlertPath)
+		b.WriteString("  read_from = \"beginning\"\n")
+		b.WriteString("  fingerprint.strategy = \"checksum\"\n")
+		b.WriteString("  line_delimiter = \"\\n\"\n\n")
+	case "auditd":
+		b.WriteString("# Auditd source (kernel audit subsystem via journald)\n")
+		b.WriteString("[sources.auditd_events]\n")
+		b.WriteString("  type = \"journald\"\n")
+		b.WriteString("  include_units = [\"auditd\"]\n\n")
+	default:
+		// RuntimeBackend "none" — no runtime security source.
+		b.WriteString("# Runtime security source: disabled (runtime_backend = \"none\")\n\n")
+	}
+
+	// Journald source for systemd-managed services.
+	journaldUnits := []string{"aibox-agent", "aibox-llm-proxy", "coredns-aibox", "squid"}
+	if m.cfg.RuntimeBackend == "falco" {
+		journaldUnits = append(journaldUnits, "falco")
+	}
+	b.WriteString("# Journald source for systemd-managed AI-Box services\n")
+	b.WriteString("[sources.journald_aibox]\n")
+	b.WriteString("  type = \"journald\"\n")
+	fmt.Fprintf(&b, "  include_units = [%s]\n\n", joinQuoted(journaldUnits))
+
+	// --- Transforms ---
+	b.WriteString("# ---- Transforms --------------------------------------------------------------\n\n")
+
+	// Parse audit JSON.
+	b.WriteString("# Parse structured JSON from audit log\n")
+	b.WriteString("[transforms.parse_audit]\n")
+	b.WriteString("  type = \"remap\"\n")
+	b.WriteString("  inputs = [\"aibox_audit\"]\n")
+	b.WriteString("  source = '''\n")
+	b.WriteString("    . = parse_json!(string!(.message))\n")
+	m.writeEnrichment(&b)
+	b.WriteString("  '''\n\n")
+
+	// Parse Squid access log.
+	b.WriteString("# Parse Squid access log format\n")
+	b.WriteString("[transforms.parse_squid]\n")
+	b.WriteString("  type = \"remap\"\n")
+	b.WriteString("  inputs = [\"squid_proxy\"]\n")
+	b.WriteString("  source = '''\n")
+	b.WriteString("    .source = \"squid\"\n")
+	m.writeEnrichment(&b)
+	b.WriteString("  '''\n\n")
+
+	// Parse OPA decision log.
+	b.WriteString("# Parse OPA decision log JSON\n")
+	b.WriteString("[transforms.parse_decisions]\n")
+	b.WriteString("  type = \"remap\"\n")
+	b.WriteString("  inputs = [\"opa_decisions\"]\n")
+	b.WriteString("  source = '''\n")
+	b.WriteString("    . = parse_json!(string!(.message))\n")
+	b.WriteString("    .source = \"opa\"\n")
+	m.writeEnrichment(&b)
+	b.WriteString("  '''\n\n")
+
+	// Runtime security transform — conditional on RuntimeBackend.
+	switch m.cfg.RuntimeBackend {
+	case "falco":
+		b.WriteString("# Parse Falco alerts (structured JSON from falco file_output)\n")
+		b.WriteString("[transforms.parse_runtime]\n")
+		b.WriteString("  type = \"remap\"\n")
+		b.WriteString("  inputs = [\"falco_alerts\"]\n")
+		b.WriteString("  source = '''\n")
+		b.WriteString("    . = parse_json!(string!(.message))\n")
+		b.WriteString("    .source = \"falco\"\n")
+		b.WriteString("    .event_type = \"falco.alert\"\n")
+		m.writeEnrichment(&b)
+		b.WriteString("  '''\n\n")
+	case "auditd":
+		b.WriteString("# Parse auditd events from journald\n")
+		b.WriteString("[transforms.parse_runtime]\n")
+		b.WriteString("  type = \"remap\"\n")
+		b.WriteString("  inputs = [\"auditd_events\"]\n")
+		b.WriteString("  source = '''\n")
+		b.WriteString("    .source = \"auditd\"\n")
+		b.WriteString("    .event_type = \"auditd.event\"\n")
+		m.writeEnrichment(&b)
+		b.WriteString("  '''\n\n")
+	}
+
+	// LLM proxy transform — filters/redacts payloads based on LLMLoggingMode.
+	b.WriteString("# LLM proxy event transform (respects llm_logging_mode policy)\n")
+	b.WriteString("[transforms.filter_llm]\n")
+	b.WriteString("  type = \"remap\"\n")
+	b.WriteString("  inputs = [\"parse_audit\"]\n")
+	b.WriteString("  source = '''\n")
+	b.WriteString("    if !starts_with(string!(.event_type), \"llm.\") { abort }\n")
+	switch m.cfg.LLMLoggingMode {
+	case "hash":
+		b.WriteString("    # hash mode: replace request/response bodies with SHA-256 hashes\n")
+		b.WriteString("    if exists(.details.request_body) {\n")
+		b.WriteString("      .details.request_body = sha2(string!(.details.request_body))\n")
+		b.WriteString("    }\n")
+		b.WriteString("    if exists(.details.response_body) {\n")
+		b.WriteString("      .details.response_body = sha2(string!(.details.response_body))\n")
+		b.WriteString("    }\n")
+	case "metadata_only":
+		b.WriteString("    # metadata_only mode: strip all payload data, keep metadata\n")
+		b.WriteString("    del(.details.request_body)\n")
+		b.WriteString("    del(.details.response_body)\n")
+		b.WriteString("    del(.details.prompt)\n")
+		b.WriteString("    del(.details.completion)\n")
+	default: // "full"
+		b.WriteString("    # full mode: pass through all LLM event data unmodified\n")
+	}
+	b.WriteString("  '''\n\n")
+
+	// Enrich journald events.
+	b.WriteString("# Enrich journald events with AI-Box context\n")
+	b.WriteString("[transforms.enrich_journald]\n")
+	b.WriteString("  type = \"remap\"\n")
+	b.WriteString("  inputs = [\"journald_aibox\"]\n")
+	b.WriteString("  source = '''\n")
+	m.writeEnrichment(&b)
+	b.WriteString("  '''\n\n")
+
+	// --- Sinks ---
+	b.WriteString("# ---- Sinks -------------------------------------------------------------------\n\n")
+
+	switch m.cfg.SinkType {
+	case "http":
+		m.writeHTTPSink(&b)
+	case "s3":
+		m.writeS3Sink(&b)
+	case "console":
+		m.writeConsoleSink(&b)
+	default: // "file"
+		m.writeFileSink(&b)
+	}
+
+	return b.String()
+}
+
+// writeEnrichment writes the common enrichment fields added to every transform.
+func (m *VectorManager) writeEnrichment(b *strings.Builder) {
+	fmt.Fprintf(b, "    .hostname = %q\n", m.cfg.Hostname)
+	fmt.Fprintf(b, "    .cluster = %q\n", m.cfg.Cluster)
+	fmt.Fprintf(b, "    .classification_level = %q\n", m.cfg.ClassificationLevel)
+	b.WriteString("    .pipeline_ts = now()\n")
+}
+
+// sinkInputs returns the list of transform names that feed into sinks,
+// conditional on RuntimeBackend configuration.
+func (m *VectorManager) sinkInputs() string {
+	inputs := []string{"parse_audit", "parse_squid", "parse_decisions"}
+	if m.cfg.RuntimeBackend == "falco" || m.cfg.RuntimeBackend == "auditd" {
+		inputs = append(inputs, "parse_runtime")
+	}
+	inputs = append(inputs, "filter_llm", "enrich_journald")
+	return fmt.Sprintf("  inputs = [%s]\n", joinQuoted(inputs))
+}
+
+func (m *VectorManager) writeFileSink(b *strings.Builder) {
+	b.WriteString("# File sink (local storage / development)\n")
+	b.WriteString("[sinks.aibox_out]\n")
+	b.WriteString("  type = \"file\"\n")
+	b.WriteString(m.sinkInputs())
+	fmt.Fprintf(b, "  path = %q\n", m.cfg.SinkPath)
+	b.WriteString("  encoding.codec = \"json\"\n\n")
+
+	m.writeBuffer(b)
+}
+
+func (m *VectorManager) writeHTTPSink(b *strings.Builder) {
+	b.WriteString("# HTTP sink (SIEM integration)\n")
+	b.WriteString("[sinks.aibox_out]\n")
+	b.WriteString("  type = \"http\"\n")
+	b.WriteString(m.sinkInputs())
+	b.WriteString("  method = \"post\"\n")
+	fmt.Fprintf(b, "  uri = %q\n", m.cfg.SinkEndpoint)
+	b.WriteString("  encoding.codec = \"json\"\n\n")
+
+	m.writeBuffer(b)
+}
+
+func (m *VectorManager) writeS3Sink(b *strings.Builder) {
+	b.WriteString("# S3/MinIO sink (immutable storage)\n")
+	b.WriteString("[sinks.aibox_out]\n")
+	b.WriteString("  type = \"aws_s3\"\n")
+	b.WriteString(m.sinkInputs())
+	if m.cfg.SinkEndpoint != "" {
+		fmt.Fprintf(b, "  endpoint = %q\n", m.cfg.SinkEndpoint)
+	}
+	b.WriteString("  bucket = \"aibox-audit\"\n")
+	b.WriteString("  key_prefix = \"logs/{{ .hostname }}/{{ .cluster }}/%Y/%m/%d/\"\n")
+	b.WriteString("  encoding.codec = \"json\"\n")
+	b.WriteString("  compression = \"gzip\"\n\n")
+
+	m.writeBuffer(b)
+}
+
+func (m *VectorManager) writeConsoleSink(b *strings.Builder) {
+	b.WriteString("# Console sink (debugging / development)\n")
+	b.WriteString("[sinks.aibox_out]\n")
+	b.WriteString("  type = \"console\"\n")
+	b.WriteString(m.sinkInputs())
+	b.WriteString("  encoding.codec = \"json\"\n\n")
+}
+
+func (m *VectorManager) writeBuffer(b *strings.Builder) {
+	b.WriteString("  # Disk-backed buffer for resilience (at-least-once delivery)\n")
+	b.WriteString("  [sinks.aibox_out.buffer]\n")
+	b.WriteString("    type = \"disk\"\n")
+	fmt.Fprintf(b, "    max_size = %d\n", m.cfg.BufferMaxBytes)
+	b.WriteString("    when_full = \"block\"\n")
+}
+
+// WriteConfig writes the generated Vector configuration to the specified path.
+func (m *VectorManager) WriteConfig(path string) error {
+	if path == "" {
+		path = m.cfg.ConfigPath
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating config directory %s: %w", dir, err)
+	}
+
+	content := m.GenerateConfig()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("writing vector config to %s: %w", path, err)
+	}
+
+	slog.Info("wrote vector config", "path", path, "sink_type", m.cfg.SinkType)
+	return nil
+}
+
+// IsRunning checks whether the Vector API is listening on the configured address.
+func (m *VectorManager) IsRunning() bool {
+	addr := net.JoinHostPort(m.cfg.APIAddr, strconv.Itoa(m.cfg.APIPort))
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// HealthCheck verifies that Vector is running and accepting connections on its API port.
+func (m *VectorManager) HealthCheck() error {
+	addr := net.JoinHostPort(m.cfg.APIAddr, strconv.Itoa(m.cfg.APIPort))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("vector health check failed (cannot connect to %s): %w", addr, err)
+	}
+	conn.Close()
+	slog.Debug("vector health check passed", "addr", addr)
+	return nil
+}
+
+// Start launches the Vector agent. It first tries systemctl, then falls back to
+// running vector directly with the configured config file.
+func (m *VectorManager) Start() error {
+	if m.IsRunning() {
+		slog.Info("vector is already running", "addr", m.cfg.APIAddr, "port", m.cfg.APIPort)
+		return nil
+	}
+
+	if path, err := exec.LookPath("systemctl"); err == nil {
+		slog.Debug("starting vector via systemctl", "path", path)
+		cmd := exec.Command(path, "start", "vector")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("systemctl start vector failed, trying direct invocation", "error", err, "output", string(out))
+		} else {
+			slog.Info("vector started via systemctl")
+			return nil
+		}
+	}
+
+	vectorPath, err := exec.LookPath("vector")
+	if err != nil {
+		return fmt.Errorf("vector binary not found in PATH: %w", err)
+	}
+
+	slog.Debug("starting vector directly", "binary", vectorPath, "config", m.cfg.ConfigPath)
+	cmd := exec.Command(vectorPath, "--config", m.cfg.ConfigPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to start vector: %s\n%s", err, string(out))
+	}
+
+	slog.Info("vector started", "config", m.cfg.ConfigPath)
+	return nil
+}
+
+// Stop shuts down the Vector agent.
+func (m *VectorManager) Stop() error {
+	if path, err := exec.LookPath("systemctl"); err == nil {
+		slog.Debug("stopping vector via systemctl")
+		cmd := exec.Command(path, "stop", "vector")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("systemctl stop vector failed", "error", err, "output", string(out))
+		} else {
+			slog.Info("vector stopped via systemctl")
+			return nil
+		}
+	}
+
+	// Fall back to pkill as Vector doesn't have a built-in shutdown command.
+	pkillPath, err := exec.LookPath("pkill")
+	if err != nil {
+		return fmt.Errorf("pkill not found in PATH: %w", err)
+	}
+
+	cmd := exec.Command(pkillPath, "-SIGTERM", "vector")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to stop vector: %s\n%s", err, string(out))
+	}
+
+	slog.Info("vector stopped")
+	return nil
+}
+
+// Reload tells a running Vector to reload its configuration.
+func (m *VectorManager) Reload() error {
+	vectorPath, err := exec.LookPath("vector")
+	if err != nil {
+		return fmt.Errorf("vector binary not found in PATH: %w", err)
+	}
+
+	slog.Debug("reloading vector config")
+	cmd := exec.Command(vectorPath, "top", "--url", fmt.Sprintf("http://%s/graphql", net.JoinHostPort(m.cfg.APIAddr, strconv.Itoa(m.cfg.APIPort))))
+	_ = cmd // Vector reload is handled via SIGHUP; use systemctl reload if available.
+
+	if path, err := exec.LookPath("systemctl"); err == nil {
+		reloadCmd := exec.Command(path, "reload", "vector")
+		if out, err := reloadCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to reload vector: %s\n%s", err, string(out))
+		}
+		slog.Info("vector configuration reloaded")
+		return nil
+	}
+
+	// Fall back to sending SIGHUP via pkill.
+	pkillPath, lookErr := exec.LookPath("pkill")
+	if lookErr != nil {
+		return fmt.Errorf("pkill not found for SIGHUP reload: %w", lookErr)
+	}
+
+	cmd = exec.Command(pkillPath, "-SIGHUP", "vector")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to reload vector via SIGHUP: %s\n%s", err, string(out))
+	}
+
+	slog.Info("vector configuration reloaded via SIGHUP")
+	return nil
+}
+
+// Install installs the Vector package using the system package manager.
+func (m *VectorManager) Install() error {
+	aptPath, err := exec.LookPath("apt-get")
+	if err != nil {
+		return fmt.Errorf("apt-get not found: only Debian/Ubuntu systems are supported: %w", err)
+	}
+
+	slog.Info("installing vector via apt-get")
+	cmd := exec.Command(aptPath, "install", "-y", "vector")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install vector: %w", err)
+	}
+
+	// Create data directory.
+	if err := os.MkdirAll(m.cfg.DataDir, 0o750); err != nil {
+		return fmt.Errorf("creating vector data directory %s: %w", m.cfg.DataDir, err)
+	}
+
+	slog.Info("vector installed successfully")
+	return nil
+}
+
+// ValidateConfig runs vector validate against the config file.
+func (m *VectorManager) ValidateConfig() error {
+	vectorPath, err := exec.LookPath("vector")
+	if err != nil {
+		return fmt.Errorf("vector binary not found in PATH: %w", err)
+	}
+
+	cmd := exec.Command(vectorPath, "validate", m.cfg.ConfigPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("vector config validation failed: %s\n%s", err, string(out))
+	}
+
+	slog.Debug("vector config validation passed", "config", m.cfg.ConfigPath)
+	return nil
+}

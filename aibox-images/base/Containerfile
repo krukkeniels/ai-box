@@ -59,13 +59,57 @@ RUN . /etc/os-release \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
+# VS Code Server (pre-installed for fast Remote SSH connect)
+# ---------------------------------------------------------------------------
+# Download and install latest stable VS Code Server. The commit hash is
+# fetched from Microsoft's CDN at build time. Pre-installing eliminates the
+# 30-60 second first-connect download. Weekly image rebuilds keep it current.
+ARG VSCODE_ARCH=x64
+RUN COMMIT_ID=$(curl -sSL https://update.code.visualstudio.com/api/commits/stable/server-linux-${VSCODE_ARCH} | jq -r '.[0]') \
+    && mkdir -p /home/.vscode-server/bin/${COMMIT_ID} \
+    && curl -sSL "https://update.code.visualstudio.com/commit:${COMMIT_ID}/server-linux-${VSCODE_ARCH}/stable" \
+       -o /tmp/vscode-server.tar.gz \
+    && tar -xzf /tmp/vscode-server.tar.gz -C /home/.vscode-server/bin/${COMMIT_ID} --strip-components=1 \
+    && rm /tmp/vscode-server.tar.gz
+
+# Pre-install curated VS Code extensions into the server image.
+# These are installed as machine-scoped extensions so they're available
+# to all users immediately on first connect.
+RUN /home/.vscode-server/bin/*/bin/code-server \
+      --install-extension ms-python.python \
+      --install-extension golang.Go \
+      --install-extension redhat.java \
+      --install-extension ms-dotnettools.csharp \
+      --install-extension dbaeumer.vscode-eslint \
+      --install-extension esbenp.prettier-vscode \
+      --install-extension eamodio.gitlens \
+      --install-extension ms-vscode.makefile-tools \
+      --extensions-dir /home/.vscode-server/extensions \
+    || true
+
+# VS Code settings: disable telemetry globally.
+RUN mkdir -p /home/.vscode-server/data/Machine \
+    && printf '{\n  "telemetry.telemetryLevel": "off"\n}\n' \
+       > /home/.vscode-server/data/Machine/settings.json
+
+# ---------------------------------------------------------------------------
+# Set inotify watches for hot reload with large projects
+# ---------------------------------------------------------------------------
+RUN echo "fs.inotify.max_user_watches=524288" >> /etc/sysctl.conf \
+    && echo "fs.inotify.max_user_watches=524288" > /etc/sysctl.d/99-aibox-inotify.conf \
+    || true
+
+# ---------------------------------------------------------------------------
 # Create non-root user
 # ---------------------------------------------------------------------------
 RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -s /bin/bash -u 1000 dev \
+    && passwd -d dev \
     && mkdir -p /home/dev/.ssh \
     && chmod 700 /home/dev/.ssh \
-    && chown -R dev:dev /home/dev/.ssh
+    && mv /home/.vscode-server /home/dev/.vscode-server \
+    && mkdir -p /home/dev/.cache/JetBrains \
+    && chown -R dev:dev /home/dev
 
 # ---------------------------------------------------------------------------
 # SSH server setup

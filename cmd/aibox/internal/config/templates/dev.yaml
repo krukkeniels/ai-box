@@ -1,0 +1,46 @@
+# AI-Box dev config — local development with security features
+config_version: 1
+runtime: podman
+image: ghcr.io/krukkeniels/aibox/base:24.04
+
+gvisor:
+  enabled: true
+  platform: systrap
+
+resources:
+  cpus: 4
+  memory: 8g
+  tmp_size: 2g
+
+network:
+  enabled: true
+  proxy_addr: "127.0.0.1"
+  proxy_port: 3128
+  dns_addr: "127.0.0.1"
+  dns_port: 53
+  allowed_domains: []
+  llm_gateway: ""
+
+registry:
+  url: ghcr.io/krukkeniels/aibox
+  verify_signatures: false
+
+credentials:
+  mode: fallback
+
+logging:
+  format: text
+  level: info
+
+ide:
+  ssh_port: 2222
+
+audit:
+  enabled: true
+  storage_backend: local
+  log_path: /var/log/aibox/audit.jsonl
+  recording_policy: disabled
+  llm_logging_mode: hash
+  runtime_backend: none
+
+shell: bash

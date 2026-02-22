@@ -1,0 +1,43 @@
+name: node
+version: "20"
+description: "Node.js 20 LTS, npm 10.x, yarn 1.22.x"
+maintainer: platform-team
+tags:
+  - language
+  - javascript
+  - runtime
+
+install:
+  method: script
+  script: install.sh
+
+network:
+  requires:
+    - id: npm-registry
+      hosts: ["nexus.internal"]
+      ports: [443]
+
+filesystem:
+  creates:
+    - "/opt/toolpacks/node"
+  caches:
+    - "$HOME/.npm"
+    - "$HOME/.yarn/cache"
+
+resources:
+  min_memory: "2GB"
+  recommended_memory: "4GB"
+
+security:
+  signed_by: platform-team@aibox.internal
+
+environment:
+  NODE_HOME: "/opt/toolpacks/node"
+
+verify:
+  - command: "node --version"
+    expect_exit_code: 0
+  - command: "npm --version"
+    expect_exit_code: 0
+  - command: "yarn --version"
+    expect_exit_code: 0
