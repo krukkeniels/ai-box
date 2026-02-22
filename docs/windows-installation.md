@@ -340,6 +340,20 @@ Initial file access after WSL2 starts can be slow (10-15 seconds) while the virt
 
 **Workaround**: Wait a few seconds after opening the terminal before running `aibox start`.
 
+### Image pull fails with 403 Forbidden
+
+The base image at `ghcr.io/krukkeniels/aibox/base:24.04` may not be published yet, or your network blocks GHCR.
+
+**Fix**: Build the image locally from source inside WSL2:
+
+```bash
+git clone https://github.com/krukkeniels/ai-box.git
+cd ai-box
+make image-base
+```
+
+Then retry `aibox start`. See the [installation guide](installation.md#image-pull-fails-403-forbidden-or-timeout) for variant images.
+
 ---
 
 ## Known limitations

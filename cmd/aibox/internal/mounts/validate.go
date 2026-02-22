@@ -67,10 +67,16 @@ func ValidateWorkspace(path string, validateFS bool) error {
 	if reason, blocked := BlockedFilesystems[fsType]; blocked {
 		return fmt.Errorf(
 			"workspace %s is on a blocked filesystem (%s): %s\n\n"+
-				"Remediation: clone your repository inside the WSL2 filesystem:\n"+
-				"  cd ~\n"+
-				"  git clone <repo-url>\n"+
-				"  aibox start --workspace ~/your-repo",
+				"  WHY: This filesystem uses a translation layer that is 3-10x slower\n"+
+				"  than native Linux filesystems (ext4, xfs, btrfs) for development.\n\n"+
+				"  FIX:\n"+
+				"    1. Clone inside WSL2:  cd ~ && git clone <repo-url>\n"+
+				"    2. Start from there:   aibox start --workspace ~/your-repo\n"+
+				"    3. Open IDE into WSL2: VS Code > 'Connect to WSL' or JetBrains Gateway\n\n"+
+				"  ALREADY CLONED? Make sure you pass the WSL2 path, not the Windows path:\n"+
+				"    Wrong:   aibox start --workspace /mnt/c/Users/you/repos/project\n"+
+				"    Correct: aibox start --workspace ~/repos/project\n\n"+
+				"  VERIFY: Run 'df -h .' inside your repo — the Type column should show ext4, not 9p/drvfs.",
 			absPath, fsType, reason,
 		)
 	}

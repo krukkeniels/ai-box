@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/aibox/aibox/internal/mounts"
 )
 
 // ValidateWorkspace checks that the workspace path exists, is a directory,
@@ -29,11 +31,26 @@ func ValidateWorkspace(path string) (string, error) {
 
 	if isNTFSPath(absPath) {
 		return "", fmt.Errorf(
-			"workspace %q appears to be on an NTFS mount (Windows filesystem)\n"+
-				"  Performance will be 3-10x slower. Clone your repo inside the WSL2 filesystem instead:\n"+
-				"    cd ~ && git clone <repo-url>",
+			"workspace %q is on an NTFS mount (Windows filesystem)\n\n"+
+				"  WHY: Files under /mnt/c/ use a 9p/drvfs translation layer that is\n"+
+				"  3-10x slower than the native ext4 filesystem inside WSL2.\n\n"+
+				"  FIX:\n"+
+				"    1. Clone inside WSL2:  cd ~ && git clone <repo-url>\n"+
+				"    2. Start from there:   aibox start --workspace ~/your-repo\n"+
+				"    3. Open IDE into WSL2: VS Code > 'Connect to WSL' or JetBrains Gateway\n\n"+
+				"  ALREADY CLONED? Make sure you pass the WSL2 path, not the Windows path:\n"+
+				"    Wrong:   aibox start --workspace /mnt/c/Users/you/repos/project\n"+
+				"    Correct: aibox start --workspace ~/repos/project\n\n"+
+				"  VERIFY: Run 'df -h .' inside your repo — the Type column should show ext4, not 9p/drvfs.",
 			absPath,
 		)
+	}
+
+	// Deep filesystem check via /proc/mounts — catches edge cases the
+	// path-prefix check misses (custom mount points, bind mounts, non-standard
+	// WSL2 configurations where Windows drives aren't at /mnt/).
+	if err := mounts.ValidateWorkspace(absPath, true); err != nil {
+		return "", err
 	}
 
 	return absPath, nil
