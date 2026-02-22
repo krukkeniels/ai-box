@@ -181,7 +181,15 @@ wsl --update
 
 **All commands in this section must run inside WSL2, not in PowerShell.**
 
-### APT (recommended for Ubuntu / WSL2)
+### Install script (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/krukkeniels/ai-box/main/scripts/install.sh | bash
+```
+
+### APT (when repository is available)
+
+Once the APT repository has been published to GitHub Pages, you can install via APT instead:
 
 ```bash
 # Add repository key and source
@@ -191,12 +199,6 @@ echo "deb [signed-by=/usr/share/keyrings/aibox-archive-keyring.gpg] https://kruk
 # Install
 sudo apt-get update
 sudo apt-get install -y aibox
-```
-
-### Alternative: install script
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/krukkeniels/ai-box/main/scripts/install.sh | bash
 ```
 
 See [installation.md](installation.md) for all install methods (Homebrew, manual download, build from source).
