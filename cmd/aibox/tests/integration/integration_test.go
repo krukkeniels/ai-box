@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package integration contains integration tests that require a running
 // container runtime (Podman or Docker). These tests are skipped in
 // environments where the runtime is unavailable.

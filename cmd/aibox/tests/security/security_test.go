@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package security contains security validation tests that verify container
 // isolation properties. These tests require a running container with the
 // aibox security profile applied.
