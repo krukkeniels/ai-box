@@ -1,0 +1,8 @@
+// AI-Box Gradle init script (open-source defaults)
+// Enterprise deployments override repository URLs to point to an internal Nexus mirror.
+allprojects {
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}

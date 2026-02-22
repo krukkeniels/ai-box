@@ -1,0 +1,4 @@
+# AI-Box Cargo configuration (open-source defaults)
+# Enterprise deployments override this to point to an internal Nexus mirror.
+[registries.crates-io]
+protocol = "sparse"

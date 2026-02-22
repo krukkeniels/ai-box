@@ -1,0 +1,3 @@
+# AI-Box npm configuration (open-source defaults)
+# Enterprise deployments override this to point to an internal Nexus mirror.
+registry=https://registry.npmjs.org/
