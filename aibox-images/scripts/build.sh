@@ -114,6 +114,7 @@ main() {
     # Build
     buildah bud \
         ${no_cache} \
+        --build-arg "BASE_REGISTRY=${registry}" \
         -t "${full_image}:${stable_tag}" \
         -f "${containerfile}" \
         "${context_dir}"

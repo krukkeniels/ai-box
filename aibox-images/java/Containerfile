@@ -5,7 +5,8 @@
 # Gradle 8.x for Java/JVM development sandboxes.
 # =============================================================================
 
-FROM harbor.internal/aibox/base:24.04
+ARG BASE_REGISTRY=ghcr.io/krukkeniels/aibox
+FROM ${BASE_REGISTRY}/base:24.04
 
 LABEL maintainer="platform-team@aibox.internal" \
       version="21-24.04" \

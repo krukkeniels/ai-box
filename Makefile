@@ -18,7 +18,7 @@ BINARIES := aibox aibox-credential-helper aibox-llm-proxy aibox-git-remote-helpe
 # Cross-compile targets for release-local.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: build $(addprefix build-,$(BINARIES)) test lint fmt release-local clean install
+.PHONY: build $(addprefix build-,$(BINARIES)) test lint fmt release-local clean install images image-base image-java image-node image-dotnet image-full
 
 # --- Build all binaries ---
 
@@ -86,6 +86,49 @@ install: build
 		cp $(BINDIR)/$$bin $(HOME)/.local/bin/$$bin; \
 		echo "Installed $$bin -> $(HOME)/.local/bin/$$bin"; \
 	done
+
+# --- Container images (local builds with podman) ---
+
+IMAGE_REGISTRY ?= ghcr.io/krukkeniels/aibox
+IMAGES_DIR     := aibox-images
+
+.PHONY: images image-base image-java image-node image-dotnet image-full
+
+images: image-base image-java image-node image-dotnet image-full
+
+image-base:
+	podman build \
+		-t $(IMAGE_REGISTRY)/base:24.04 \
+		-f $(IMAGES_DIR)/base/Containerfile \
+		$(IMAGES_DIR)/base
+
+image-java: image-base
+	podman build \
+		--build-arg BASE_REGISTRY=$(IMAGE_REGISTRY) \
+		-t $(IMAGE_REGISTRY)/java:21-24.04 \
+		-f $(IMAGES_DIR)/java/Containerfile \
+		$(IMAGES_DIR)/java
+
+image-node: image-base
+	podman build \
+		--build-arg BASE_REGISTRY=$(IMAGE_REGISTRY) \
+		-t $(IMAGE_REGISTRY)/node:20-24.04 \
+		-f $(IMAGES_DIR)/node/Containerfile \
+		$(IMAGES_DIR)/node
+
+image-dotnet: image-base
+	podman build \
+		--build-arg BASE_REGISTRY=$(IMAGE_REGISTRY) \
+		-t $(IMAGE_REGISTRY)/dotnet:8-24.04 \
+		-f $(IMAGES_DIR)/dotnet/Containerfile \
+		$(IMAGES_DIR)/dotnet
+
+image-full: image-base
+	podman build \
+		--build-arg BASE_REGISTRY=$(IMAGE_REGISTRY) \
+		-t $(IMAGE_REGISTRY)/full:24.04 \
+		-f $(IMAGES_DIR)/full/Containerfile \
+		$(IMAGES_DIR)/full
 
 # --- Clean ---
 

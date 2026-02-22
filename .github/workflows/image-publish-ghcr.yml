@@ -1,0 +1,146 @@
+# =============================================================================
+# Publish AI-Box Images to GitHub Container Registry (GHCR)
+# =============================================================================
+# Builds all image variants with Podman and pushes to ghcr.io.
+# Triggered on push to main (when image files change) or manually.
+# =============================================================================
+
+name: "Publish Images to GHCR"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "aibox-images/base/**"
+      - "aibox-images/java/**"
+      - "aibox-images/node/**"
+      - "aibox-images/dotnet/**"
+      - "aibox-images/full/**"
+      - "aibox-images/scripts/**"
+  workflow_dispatch:
+    inputs:
+      image_variant:
+        description: "Build a single variant instead of all"
+        required: false
+        type: choice
+        options:
+          - all
+          - base
+          - java
+          - node
+          - dotnet
+          - full
+        default: all
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}/aibox
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint Containerfiles
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint Containerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run hadolint
+        run: |
+          chmod +x aibox-images/scripts/lint.sh
+          cd aibox-images && ./scripts/lint.sh
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Build and push base image
+  # ---------------------------------------------------------------------------
+  build-base:
+    name: "Build base"
+    needs: [lint]
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.image_variant == 'all' ||
+      github.event.inputs.image_variant == 'base'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Build base image
+        run: |
+          podman build \
+            -t "${REGISTRY}/base:24.04" \
+            -f aibox-images/base/Containerfile \
+            aibox-images/base
+
+      - name: Push base image
+        run: podman push "${REGISTRY}/base:24.04"
+
+      - name: Scan base image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.REGISTRY }}/base:24.04"
+          severity: "CRITICAL"
+          exit-code: "1"
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Build and push variant images
+  # ---------------------------------------------------------------------------
+  build-variants:
+    name: "Build ${{ matrix.variant }}"
+    needs: [lint, build-base]
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.image_variant == 'all' ||
+      github.event.inputs.image_variant == matrix.variant
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [java, node, dotnet, full]
+        include:
+          - variant: java
+            tag: "21-24.04"
+          - variant: node
+            tag: "20-24.04"
+          - variant: dotnet
+            tag: "8-24.04"
+          - variant: full
+            tag: "24.04"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Build variant image
+        run: |
+          podman build \
+            --build-arg "BASE_REGISTRY=${REGISTRY}" \
+            -t "${REGISTRY}/${{ matrix.variant }}:${{ matrix.tag }}" \
+            -f "aibox-images/${{ matrix.variant }}/Containerfile" \
+            "aibox-images/${{ matrix.variant }}"
+
+      - name: Push variant image
+        run: podman push "${REGISTRY}/${{ matrix.variant }}:${{ matrix.tag }}"
+
+      - name: Scan variant image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.REGISTRY }}/${{ matrix.variant }}:${{ matrix.tag }}"
+          severity: "CRITICAL"
+          exit-code: "1"

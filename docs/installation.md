@@ -207,16 +207,35 @@ wsl --update
 
 If gVisor still fails, AI-Box falls back to seccomp-only isolation (still strong).
 
-### Image pull fails
+### Image pull fails (403 Forbidden or timeout)
 
-If the base image cannot be pulled (air-gapped network, registry unreachable):
+If the base image cannot be pulled (GHCR package not yet published, air-gapped network, registry unreachable), build it locally from source:
 
 ```bash
-# Pull manually later
-aibox update
+# Clone the repo (if you haven't already)
+git clone https://github.com/krukkeniels/ai-box.git
+cd ai-box
 
-# Or pull directly with podman
-podman pull ghcr.io/krukkeniels/aibox/base:24.04
+# Build the base image locally (~5 minutes)
+make image-base
+
+# Verify
+podman images | grep aibox
+```
+
+To build a language-specific variant instead:
+
+```bash
+make image-java    # JDK 21 + Maven + Gradle
+make image-node    # Node.js 20 + Yarn
+make image-dotnet  # .NET SDK 8
+make image-full    # All of the above + Python + Bazel
+```
+
+Enterprise users with an internal Harbor registry:
+
+```bash
+make image-base IMAGE_REGISTRY=harbor.internal/aibox
 ```
 
 ### Seccomp profile not found
