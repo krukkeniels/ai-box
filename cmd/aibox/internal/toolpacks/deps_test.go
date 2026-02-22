@@ -13,8 +13,8 @@ func setupTestRegistry(t *testing.T) (*Registry, string) {
 
 	// Create node@20 pack.
 	nodeDir := filepath.Join(dir, "node")
-	os.MkdirAll(nodeDir, 0o755)
-	os.WriteFile(filepath.Join(nodeDir, "manifest.yaml"), []byte(`
+	_ = os.MkdirAll(nodeDir, 0o755)
+	_ = os.WriteFile(filepath.Join(nodeDir, "manifest.yaml"), []byte(`
 name: node
 version: "20"
 description: "Node.js 20 LTS"
@@ -26,8 +26,8 @@ install:
 
 	// Create angular@18 with dependency on node@20.
 	angularDir := filepath.Join(dir, "angular")
-	os.MkdirAll(angularDir, 0o755)
-	os.WriteFile(filepath.Join(angularDir, "manifest.yaml"), []byte(`
+	_ = os.MkdirAll(angularDir, 0o755)
+	_ = os.WriteFile(filepath.Join(angularDir, "manifest.yaml"), []byte(`
 name: angular
 version: "18"
 description: "Angular CLI 18.x"
@@ -42,8 +42,8 @@ dependencies:
 
 	// Create java@21 (no dependencies).
 	javaDir := filepath.Join(dir, "java")
-	os.MkdirAll(javaDir, 0o755)
-	os.WriteFile(filepath.Join(javaDir, "manifest.yaml"), []byte(`
+	_ = os.MkdirAll(javaDir, 0o755)
+	_ = os.WriteFile(filepath.Join(javaDir, "manifest.yaml"), []byte(`
 name: java
 version: "21"
 description: "OpenJDK 21"
@@ -106,8 +106,8 @@ func TestResolveDependencies_CircularDetection(t *testing.T) {
 
 	// Create pack A depends on B, B depends on A.
 	aDir := filepath.Join(dir, "a")
-	os.MkdirAll(aDir, 0o755)
-	os.WriteFile(filepath.Join(aDir, "manifest.yaml"), []byte(`
+	_ = os.MkdirAll(aDir, 0o755)
+	_ = os.WriteFile(filepath.Join(aDir, "manifest.yaml"), []byte(`
 name: a
 version: "1"
 description: "Pack A"
@@ -121,8 +121,8 @@ dependencies:
 `), 0o644)
 
 	bDir := filepath.Join(dir, "b")
-	os.MkdirAll(bDir, 0o755)
-	os.WriteFile(filepath.Join(bDir, "manifest.yaml"), []byte(`
+	_ = os.MkdirAll(bDir, 0o755)
+	_ = os.WriteFile(filepath.Join(bDir, "manifest.yaml"), []byte(`
 name: b
 version: "1"
 description: "Pack B"

@@ -17,13 +17,13 @@ func newMockVaultServer(t *testing.T, secrets map[string]string, healthy bool) *
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/sys/health":
 			if healthy {
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]any{"initialized": true, "sealed": false})
+				_ = json.NewEncoder(w).Encode(map[string]any{"initialized": true, "sealed": false})
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
 			}
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/jwt/login":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"auth": map[string]any{
 					"client_token":   "test-vault-token",
 					"lease_duration": 3600,
@@ -41,11 +41,11 @@ func newMockVaultServer(t *testing.T, secrets map[string]string, healthy bool) *
 			value, ok := secrets[credType]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]any{"errors": []string{"secret not found"}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"errors": []string{"secret not found"}})
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"lease_id": "lease-" + credType,
 				"data": map[string]any{
 					"data": map[string]string{"value": value},
@@ -109,7 +109,7 @@ func TestVaultProviderCaching(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/aibox/data/git-token" {
 			callCount++
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"data": map[string]string{"value": "cached-token"},
 				},
@@ -214,7 +214,7 @@ func TestVaultProviderLeaseTracking(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"lease_id": "lease-" + credType,
 				"data": map[string]any{
 					"data": map[string]string{"value": value},
@@ -223,7 +223,7 @@ func TestVaultProviderLeaseTracking(t *testing.T) {
 
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/sys/leases/revoke":
 			var body map[string]string
-			json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			revokedLeases = append(revokedLeases, body["lease_id"])
 			w.WriteHeader(http.StatusOK)
 
@@ -390,7 +390,7 @@ func TestVaultProviderDelete(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/aibox/data/git-token":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"lease_id": "lease-git-token",
 				"data": map[string]any{
 					"data": map[string]string{"value": "token"},
