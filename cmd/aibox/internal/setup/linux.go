@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aibox/aibox/internal/assets"
 	"github.com/aibox/aibox/internal/config"
 	"github.com/aibox/aibox/internal/falco"
 	"github.com/aibox/aibox/internal/network"
@@ -275,37 +276,11 @@ func installSeccomp() error {
 		return nil
 	}
 
-	// Find source profile.
-	sourcePath := findSeccompSource()
-	if sourcePath == "" {
-		fmt.Println("  WARN: seccomp profile source not found, skipping")
-		fmt.Println("  You can install it manually later: sudo cp configs/seccomp.json /etc/aibox/seccomp.json")
-		return nil
-	}
-
-	// Create target directory (needs root).
 	fmt.Printf("  Installing seccomp profile to %s\n", targetPath)
-	fmt.Println("  NOTE: This requires root privileges.")
 
-	if err := os.MkdirAll("/etc/aibox", 0o755); err != nil {
-		// Try with sudo.
-		if err := exec.Command("sudo", "mkdir", "-p", "/etc/aibox").Run(); err != nil {
-			return fmt.Errorf("cannot create /etc/aibox: %w (try running with sudo)", err)
-		}
-	}
-
-	// Copy file.
-	data, err := os.ReadFile(sourcePath)
-	if err != nil {
-		return fmt.Errorf("reading seccomp source %s: %w", sourcePath, err)
-	}
-
-	if err := os.WriteFile(targetPath, data, 0o644); err != nil {
-		// Try with sudo.
-		cmd := exec.Command("sudo", "cp", sourcePath, targetPath)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("installing seccomp profile: %w (try running with sudo)", err)
-		}
+	// Write embedded seccomp profile directly to target path.
+	if err := assets.WriteSeccompProfile(targetPath); err != nil {
+		return fmt.Errorf("installing seccomp profile: %w", err)
 	}
 
 	// Verify the file was actually installed.
@@ -331,15 +306,19 @@ func loadAppArmor() error {
 		return nil
 	}
 
-	// Find the profile source.
-	profilePath := findAppArmorSource()
-	if profilePath == "" {
-		fmt.Println("  WARN: AppArmor profile source not found, skipping")
-		fmt.Println("  You can load it manually: sudo apparmor_parser -r configs/apparmor/aibox-sandbox")
-		return nil
+	// Write embedded AppArmor profile to a temp file for apparmor_parser.
+	tmpDir, err := os.MkdirTemp("", "aibox-apparmor-*")
+	if err != nil {
+		return fmt.Errorf("creating temp directory for AppArmor profile: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	profilePath := filepath.Join(tmpDir, "aibox-sandbox")
+	if err := assets.WriteAppArmorProfile(profilePath); err != nil {
+		return fmt.Errorf("writing embedded AppArmor profile: %w", err)
 	}
 
-	fmt.Printf("  Loading AppArmor profile from %s\n", profilePath)
+	fmt.Printf("  Loading AppArmor profile from embedded asset\n")
 	if err := security.LoadProfile(profilePath); err != nil {
 		// May need sudo.
 		cmd := exec.Command("sudo", "apparmor_parser", "-r", "-W", profilePath)
@@ -351,7 +330,7 @@ func loadAppArmor() error {
 	}
 
 	// Verify the profile is actually loaded in the kernel.
-	loaded, err := security.IsProfileLoaded("aibox-sandbox")
+	loaded, err = security.IsProfileLoaded("aibox-sandbox")
 	if err != nil {
 		return fmt.Errorf("could not verify AppArmor profile after load: %w", err)
 	}
@@ -398,58 +377,6 @@ func pullBaseImage(cfg *config.Config) error {
 
 	fmt.Printf("  Image %s cached\n", cfg.Image)
 	return nil
-}
-
-func findSeccompSource() string {
-	candidates := []string{
-		"configs/seccomp.json",
-	}
-
-	// Relative to executable.
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "configs", "seccomp.json"),
-			filepath.Join(filepath.Dir(dir), "configs", "seccomp.json"),
-		)
-	}
-
-	// Relative to working directory.
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(wd, "configs", "seccomp.json"))
-	}
-
-	for _, p := range candidates {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
-func findAppArmorSource() string {
-	candidates := []string{
-		"configs/apparmor/aibox-sandbox",
-	}
-
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "configs", "apparmor", "aibox-sandbox"),
-			filepath.Join(filepath.Dir(dir), "configs", "apparmor", "aibox-sandbox"),
-		)
-	}
-
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(wd, "configs", "apparmor", "aibox-sandbox"))
-	}
-
-	for _, p := range candidates {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	return ""
 }
 
 // installNFTables generates and applies the nftables ruleset for container
