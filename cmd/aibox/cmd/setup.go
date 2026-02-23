@@ -57,10 +57,16 @@ func init() {
 	setupCmd.Flags().BoolVar(&forceSetup, "force", false, "re-run all steps regardless of existing state")
 	setupCmd.Flags().BoolVar(&offlineMode, "offline", false, "skip steps that require network access")
 	setupCmd.Flags().BoolVar(&skipPull, "skip-pull", false, "skip image pull even if not cached locally")
+	setupCmd.Flags().String("profile", "", "setup profile: 'wsl-dev' for WSL2 development")
 	rootCmd.AddCommand(setupCmd)
 }
 
 func runSetup(cmd *cobra.Command, args []string) error {
+	profile, _ := cmd.Flags().GetString("profile")
+	if profile != "" {
+		return setup.RunProfile(profile)
+	}
+
 	hostInfo := host.Detect()
 
 	if !hostInfo.IsSupported() {
