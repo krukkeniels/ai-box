@@ -22,10 +22,18 @@ import (
 // CheckResult represents the outcome of a single diagnostic check.
 type CheckResult struct {
 	Name        string `json:"name"`
-	Status      string `json:"status"` // pass, fail, warn
+	Status      string `json:"status"` // pass, fail, warn, info
 	Message     string `json:"message"`
 	Remediation string `json:"remediation,omitempty"`
 }
+
+// Status values for diagnostic checks.
+const (
+	StatusPass = "pass"
+	StatusWarn = "warn"
+	StatusFail = "fail"
+	StatusInfo = "info" // expected condition for this platform/config, not actionable
+)
 
 // Report is a collection of check results.
 type Report struct {

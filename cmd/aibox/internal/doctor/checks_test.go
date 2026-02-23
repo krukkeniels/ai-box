@@ -272,6 +272,33 @@ func TestFirstLine(t *testing.T) {
 	}
 }
 
+func TestStatusConstants(t *testing.T) {
+	if StatusPass != "pass" {
+		t.Error("StatusPass should be 'pass'")
+	}
+	if StatusWarn != "warn" {
+		t.Error("StatusWarn should be 'warn'")
+	}
+	if StatusFail != "fail" {
+		t.Error("StatusFail should be 'fail'")
+	}
+	if StatusInfo != "info" {
+		t.Error("StatusInfo should be 'info'")
+	}
+}
+
+func TestReport_HasFailures_IgnoresInfo(t *testing.T) {
+	report := &Report{
+		Results: []CheckResult{
+			{Status: StatusPass},
+			{Status: StatusInfo},
+		},
+	}
+	if report.HasFailures() {
+		t.Error("info status should not count as failure")
+	}
+}
+
 // TestRemediations_NoRepoRelativePaths verifies that doctor remediation messages
 // do not reference repo-relative paths (which don't exist in binary installs)
 // and instead direct users to "aibox setup --system".

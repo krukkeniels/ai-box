@@ -50,13 +50,15 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			indicator = "[WARN]"
 		case "fail":
 			indicator = "[FAIL]"
+		case "info":
+			indicator = "[INFO]"
 		default:
 			indicator = "[????]"
 		}
 
 		fmt.Printf("  %s %s: %s\n", indicator, r.Name, r.Message)
 
-		if r.Remediation != "" && r.Status != "pass" {
+		if r.Remediation != "" && r.Status != "pass" && r.Status != "info" {
 			// Indent remediation lines.
 			fmt.Printf("         Remediation: %s\n", r.Remediation)
 		}
