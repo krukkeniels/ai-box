@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aibox/aibox/internal/config"
 	"github.com/aibox/aibox/internal/mounts"
@@ -290,6 +291,16 @@ func (m *Manager) Start(opts StartOpts) error {
 		}
 	}
 
+	// Probe SSH readiness before claiming it works.
+	var sshReady bool
+	if effectiveSSHPort > 0 {
+		probe := ProbeSSH("localhost", effectiveSSHPort, 10*time.Second)
+		sshReady = probe.Ready
+		if !probe.Ready {
+			slog.Warn("SSH readiness probe failed", "port", effectiveSSHPort, "error", probe.Error)
+		}
+	}
+
 	fmt.Printf("AI-Box sandbox started.\n")
 	fmt.Printf("  Container: %s\n", name)
 	fmt.Printf("  ID:        %.12s\n", containerID)
@@ -308,7 +319,11 @@ func (m *Manager) Start(opts StartOpts) error {
 		fmt.Printf("  Network:   none (isolated)\n")
 	}
 	if effectiveSSHPort > 0 {
-		fmt.Printf("  SSH:       localhost:%d (VS Code: 'Remote-SSH: Connect to Host...' -> aibox)\n", effectiveSSHPort)
+		if sshReady {
+			fmt.Printf("  SSH:       localhost:%d (VS Code: 'Remote-SSH: Connect to Host...' -> aibox)\n", effectiveSSHPort)
+		} else {
+			fmt.Printf("  SSH:       localhost:%d (WARNING: SSH handshake failed — run 'aibox doctor' for diagnostics)\n", effectiveSSHPort)
+		}
 	}
 	fmt.Printf("\nRun 'aibox shell' to open a terminal in the sandbox.\n")
 
