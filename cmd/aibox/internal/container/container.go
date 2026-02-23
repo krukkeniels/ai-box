@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aibox/aibox/internal/config"
+	"github.com/aibox/aibox/internal/host"
 	"github.com/aibox/aibox/internal/mounts"
 	"github.com/aibox/aibox/internal/security"
 )
@@ -45,6 +46,7 @@ type Manager struct {
 	RuntimePath string // path to podman/docker binary
 	RuntimeName string // "podman" or "docker"
 	Cfg         *config.Config
+	IsWSL       bool // true when running inside WSL2
 }
 
 // NewManager creates a container Manager for the configured runtime.
@@ -53,10 +55,12 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s not found in PATH: %w", cfg.Runtime, err)
 	}
+	hostInfo := host.Detect()
 	return &Manager{
 		RuntimePath: rtPath,
 		RuntimeName: cfg.Runtime,
 		Cfg:         cfg,
+		IsWSL:       hostInfo.IsWSL2,
 	}, nil
 }
 
@@ -320,7 +324,7 @@ func (m *Manager) Start(opts StartOpts) error {
 	}
 	if effectiveSSHPort > 0 {
 		if sshReady {
-			fmt.Printf("  SSH:       localhost:%d (VS Code: 'Remote-SSH: Connect to Host...' -> aibox)\n", effectiveSSHPort)
+			fmt.Printf("  SSH:       %s\n", ideHint(m.IsWSL, effectiveSSHPort))
 		} else {
 			fmt.Printf("  SSH:       localhost:%d (WARNING: SSH handshake failed — run 'aibox doctor' for diagnostics)\n", effectiveSSHPort)
 		}
@@ -328,6 +332,21 @@ func (m *Manager) Start(opts StartOpts) error {
 	fmt.Printf("\nRun 'aibox shell' to open a terminal in the sandbox.\n")
 
 	return nil
+}
+
+// ideHint returns an environment-appropriate IDE connection hint.
+func ideHint(isWSL bool, port int) string {
+	if isWSL {
+		return fmt.Sprintf(
+			"localhost:%d\n"+
+				"         Open VS Code from WSL terminal: code .\n"+
+				"         Then use Remote-SSH from the WSL VS Code window (not Windows).\n"+
+				"         Or attach via Dev Containers.",
+			port)
+	}
+	return fmt.Sprintf(
+		"localhost:%d (VS Code: 'Remote-SSH: Connect to Host...' -> aibox)",
+		port)
 }
 
 // Stop gracefully stops the running aibox container.

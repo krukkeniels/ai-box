@@ -3,6 +3,7 @@ package container
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,5 +102,22 @@ func TestProbeSSHResult_String(t *testing.T) {
 				t.Errorf("String() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIDEHint_WSL(t *testing.T) {
+	hint := ideHint(true, 2222)
+	if strings.Contains(hint, "'Remote-SSH: Connect to Host...'") {
+		t.Error("WSL hint should not use generic Remote-SSH instructions")
+	}
+	if !strings.Contains(hint, "code .") {
+		t.Error("WSL hint should suggest 'code .' from WSL terminal")
+	}
+}
+
+func TestIDEHint_Linux(t *testing.T) {
+	hint := ideHint(false, 2222)
+	if !strings.Contains(hint, "Remote-SSH") {
+		t.Error("Linux hint should mention Remote-SSH")
 	}
 }
