@@ -463,10 +463,9 @@ func (m *Manager) ensureImage(image string) error {
 
 	// For unqualified short names (e.g. "aibox-base:24.04"), check whether
 	// the image exists under the localhost/ prefix before pulling remotely.
-	if !strings.Contains(image, "/") {
-		candidate := "localhost/" + image
-		if err := m.runQuiet("image", "inspect", candidate); err == nil {
-			slog.Debug("image found with localhost/ prefix", "original", image, "resolved", candidate)
+	if normalized := normalizeImageRef(image, true); normalized != image {
+		if err := m.runQuiet("image", "inspect", normalized); err == nil {
+			slog.Debug("image found with localhost/ prefix", "original", image, "resolved", normalized)
 			return nil
 		}
 	}

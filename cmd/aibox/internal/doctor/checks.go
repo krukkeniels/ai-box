@@ -66,8 +66,8 @@ func RunAll(cfg *config.Config) *Report {
 	checks := []func() CheckResult{
 		func() CheckResult { return CheckContainerRuntime(cfg.Runtime) },
 		func() CheckResult { return CheckRootless(cfg.Runtime) },
-		func() CheckResult { return CheckGVisor(cfg) },
-		func() CheckResult { return CheckAppArmor() },
+		func() CheckResult { return CheckGVisor(cfg, hostInfo) },
+		func() CheckResult { return CheckAppArmor(hostInfo) },
 		func() CheckResult { return CheckSeccomp() },
 		func() CheckResult { return CheckImage(cfg) },
 		func() CheckResult { return CheckDiskSpace() },
@@ -232,14 +232,21 @@ func CheckRootless(runtime string) CheckResult {
 }
 
 // CheckGVisor verifies that the gVisor (runsc) runtime is installed and
-// registered with the container runtime.
-func CheckGVisor(cfg *config.Config) CheckResult {
+// registered with the container runtime. On WSL2, a disabled gVisor is
+// reported as info rather than warn since it is a common configuration.
+func CheckGVisor(cfg *config.Config, hostInfo ...host.HostInfo) CheckResult {
 	result := CheckResult{Name: "gVisor Runtime"}
 
 	if !cfg.GVisor.Enabled {
-		result.Status = "warn"
-		result.Message = "gVisor is disabled in configuration"
-		result.Remediation = "Set gvisor.enabled=true in config for maximum isolation"
+		isWSL := len(hostInfo) > 0 && hostInfo[0].IsWSL2
+		if isWSL {
+			result.Status = StatusInfo
+			result.Message = "gVisor is disabled in configuration (expected on WSL2 — security relies on seccomp)"
+		} else {
+			result.Status = StatusWarn
+			result.Message = "gVisor is disabled in configuration"
+			result.Remediation = "Set gvisor.enabled=true in config for maximum isolation"
+		}
 		return result
 	}
 
@@ -296,12 +303,19 @@ func CheckGVisor(cfg *config.Config) CheckResult {
 }
 
 // CheckAppArmor verifies that AppArmor is available and the aibox-sandbox
-// profile is loaded.
-func CheckAppArmor() CheckResult {
+// profile is loaded. When hostInfo is provided and indicates WSL2, missing
+// AppArmor is downgraded to info (expected on WSL2).
+func CheckAppArmor(hostInfo ...host.HostInfo) CheckResult {
 	result := CheckResult{Name: "AppArmor Profile"}
+	isWSL := len(hostInfo) > 0 && hostInfo[0].IsWSL2
 
 	if !security.IsAppArmorAvailable() {
-		result.Status = "warn"
+		if isWSL {
+			result.Status = StatusInfo
+			result.Message = "AppArmor is not available (expected on WSL2)"
+			return result
+		}
+		result.Status = StatusWarn
 		result.Message = "AppArmor is not available on this system"
 		result.Remediation = "AppArmor provides an additional isolation layer.\n" +
 			"  Ubuntu: AppArmor is enabled by default. Check: sudo aa-status\n" +
@@ -633,7 +647,14 @@ func CheckPolicyFiles(cfg *config.Config) CheckResult {
 	}
 
 	if len(missing) > 0 && len(found) == 0 {
-		result.Status = "warn"
+		// If this looks like minimal/personal config (no network, default policy path),
+		// missing policy is expected, not a warning.
+		if !cfg.Network.Enabled && cfg.Policy.OrgBaselinePath == "/etc/aibox/org-policy.yaml" {
+			result.Status = StatusInfo
+			result.Message = "no org policy configured (expected for minimal/personal setup)"
+			return result
+		}
+		result.Status = StatusWarn
 		result.Message = fmt.Sprintf("policy files not found: %s", strings.Join(missing, "; "))
 		result.Remediation = "Install org baseline policy:\n" +
 			"  sudo aibox setup --system\n" +
@@ -750,6 +771,24 @@ func CheckFalco(cfg *config.Config) CheckResult {
 	result.Status = "pass"
 	result.Message = fmt.Sprintf("Falco running (%s), rules deployed, alerts output configured", firstLine(version))
 	return result
+}
+
+// RunOptions controls diagnostic check behavior.
+type RunOptions struct {
+	Strict bool // upgrade info-level results to warn
+}
+
+// RunAllWithOptions executes all diagnostic checks with configurable behavior.
+func RunAllWithOptions(cfg *config.Config, opts RunOptions) *Report {
+	report := RunAll(cfg)
+	if opts.Strict {
+		for i := range report.Results {
+			if report.Results[i].Status == StatusInfo {
+				report.Results[i].Status = StatusWarn
+			}
+		}
+	}
+	return report
 }
 
 func firstLine(s string) string {

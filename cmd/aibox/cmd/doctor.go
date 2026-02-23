@@ -19,6 +19,8 @@ network connectivity, and registry access.`,
 
 func init() {
 	doctorCmd.Flags().String("format", "text", "output format (text or json)")
+	doctorCmd.Flags().Bool("strict", false, "treat info-level results as warnings (for enterprise validation)")
+	doctorCmd.Flags().Bool("ide", false, "run IDE connectivity diagnostics only")
 
 	rootCmd.AddCommand(doctorCmd)
 }
@@ -26,7 +28,17 @@ func init() {
 func runDoctor(cmd *cobra.Command, args []string) error {
 	format, _ := cmd.Flags().GetString("format")
 
-	report := doctor.RunAll(Cfg)
+	strict, _ := cmd.Flags().GetBool("strict")
+	ideOnly, _ := cmd.Flags().GetBool("ide")
+
+	var report *doctor.Report
+	if ideOnly {
+		report = doctor.RunIDEChecks(Cfg)
+	} else if strict {
+		report = doctor.RunAllWithOptions(Cfg, doctor.RunOptions{Strict: true})
+	} else {
+		report = doctor.RunAll(Cfg)
+	}
 
 	if format == "json" {
 		out, err := report.JSON()

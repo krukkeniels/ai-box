@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/aibox/aibox/internal/config"
+	"github.com/aibox/aibox/internal/host"
+	"github.com/aibox/aibox/internal/security"
 )
 
 func TestParseKernelVersion(t *testing.T) {
@@ -401,5 +403,55 @@ func TestCheckPolicyFiles_RemediationIncludesConfigPath(t *testing.T) {
 	if !strings.Contains(result.Remediation, customPath) {
 		t.Errorf("policy remediation should include configured path %q, got:\n  %s",
 			customPath, result.Remediation)
+	}
+}
+
+func TestCheckAppArmor_WSL_IsInfo(t *testing.T) {
+	wslHost := host.HostInfo{OS: "linux", IsWSL2: true}
+	result := CheckAppArmor(wslHost)
+	// On this test machine AppArmor may or may not be available.
+	// If unavailable on WSL, should be info.
+	if !security.IsAppArmorAvailable() {
+		if result.Status != StatusInfo {
+			t.Errorf("AppArmor unavailable on WSL should be info, got %q", result.Status)
+		}
+		if !strings.Contains(result.Message, "expected on WSL2") {
+			t.Error("message should mention WSL2")
+		}
+	}
+}
+
+func TestCheckAppArmor_NonWSL_IsWarn(t *testing.T) {
+	nativeHost := host.HostInfo{OS: "linux", IsWSL2: false}
+	result := CheckAppArmor(nativeHost)
+	if !security.IsAppArmorAvailable() {
+		if result.Status != StatusWarn {
+			t.Errorf("AppArmor unavailable on native Linux should be warn, got %q", result.Status)
+		}
+	}
+}
+
+func TestCheckPolicyFiles_MinimalConfig_IsInfo(t *testing.T) {
+	cfg := &config.Config{
+		Policy: config.PolicyConfig{
+			OrgBaselinePath: "/etc/aibox/org-policy.yaml",
+		},
+		Network: config.NetworkConfig{Enabled: false},
+	}
+	result := CheckPolicyFiles(cfg)
+	// For minimal config with default policy path and network disabled,
+	// missing policy should be info not warn.
+	if result.Status == StatusWarn {
+		t.Error("missing policy in minimal mode should not be warn")
+	}
+}
+
+func TestRunAllWithOptions_Strict(t *testing.T) {
+	cfg := &config.Config{}
+	report := RunAllWithOptions(cfg, RunOptions{Strict: true})
+	for _, r := range report.Results {
+		if r.Status == StatusInfo {
+			t.Errorf("strict mode should not have info-level results, found: %s", r.Name)
+		}
 	}
 }

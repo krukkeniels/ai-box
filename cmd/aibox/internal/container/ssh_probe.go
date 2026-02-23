@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,7 +27,7 @@ func (r SSHProbeResult) String() string {
 // It retries with backoff up to the given timeout.
 // A successful probe means the remote sent an "SSH-2.0-" banner line.
 func ProbeSSH(host string, port int, timeout time.Duration) SSHProbeResult {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	deadline := time.Now().Add(timeout)
 	delay := 200 * time.Millisecond
 
