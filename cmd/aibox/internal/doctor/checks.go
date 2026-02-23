@@ -313,8 +313,8 @@ func CheckAppArmor() CheckResult {
 		result.Status = "warn"
 		result.Message = "aibox-sandbox AppArmor profile is not loaded (gVisor + seccomp still provide strong isolation)"
 		result.Remediation = "Load the profile for additional isolation:\n" +
-			"  sudo apparmor_parser -r configs/apparmor/aibox-sandbox\n" +
-			"  Or run: aibox setup"
+			"  sudo aibox setup --system\n" +
+			"  (The profile is bundled in the aibox binary)"
 		return result
 	}
 
@@ -356,9 +356,8 @@ func CheckSeccomp() CheckResult {
 	result.Status = "fail"
 	result.Message = "seccomp profile (seccomp.json) not found"
 	result.Remediation = "Install the seccomp profile:\n" +
-		"  sudo mkdir -p /etc/aibox\n" +
-		"  sudo cp configs/seccomp.json /etc/aibox/seccomp.json\n" +
-		"  Or run: aibox setup"
+		"  sudo aibox setup --system\n" +
+		"  (The profile is bundled in the aibox binary and will be installed to /etc/aibox/seccomp.json)"
 	return result
 }
 
@@ -629,9 +628,8 @@ func CheckPolicyFiles(cfg *config.Config) CheckResult {
 		result.Status = "warn"
 		result.Message = fmt.Sprintf("policy files not found: %s", strings.Join(missing, "; "))
 		result.Remediation = "Install org baseline policy:\n" +
-			"  sudo mkdir -p /etc/aibox\n" +
-			"  sudo cp aibox-policies/org/policy.yaml /etc/aibox/org-policy.yaml\n" +
-			"  Or run: aibox setup"
+			"  sudo aibox setup --system\n" +
+			"  Or create a custom policy at: " + cfg.Policy.OrgBaselinePath
 		return result
 	}
 

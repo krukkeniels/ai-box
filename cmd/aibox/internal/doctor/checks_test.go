@@ -2,7 +2,10 @@ package doctor
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/aibox/aibox/internal/config"
 )
 
 func TestParseKernelVersion(t *testing.T) {
@@ -266,5 +269,110 @@ func TestFirstLine(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("firstLine(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// TestRemediations_NoRepoRelativePaths verifies that doctor remediation messages
+// do not reference repo-relative paths (which don't exist in binary installs)
+// and instead direct users to "aibox setup --system".
+func TestRemediations_NoRepoRelativePaths(t *testing.T) {
+	// Paths that should never appear in remediation messages.
+	forbiddenPaths := []string{
+		"configs/seccomp.json",
+		"configs/apparmor/",
+		"aibox-policies/",
+	}
+
+	// CheckSeccomp: on a test machine without /etc/aibox/seccomp.json,
+	// this will produce a fail result with remediation.
+	seccompResult := CheckSeccomp()
+	if seccompResult.Remediation != "" {
+		for _, fp := range forbiddenPaths {
+			if strings.Contains(seccompResult.Remediation, fp) {
+				t.Errorf("CheckSeccomp remediation contains repo-relative path %q:\n  %s",
+					fp, seccompResult.Remediation)
+			}
+		}
+		if !strings.Contains(seccompResult.Remediation, "aibox setup --system") {
+			t.Errorf("CheckSeccomp remediation should reference 'aibox setup --system', got:\n  %s",
+				seccompResult.Remediation)
+		}
+	}
+
+	// CheckAppArmor: exercise the check and verify remediation if present.
+	apparmorResult := CheckAppArmor()
+	if apparmorResult.Remediation != "" {
+		for _, fp := range forbiddenPaths {
+			if strings.Contains(apparmorResult.Remediation, fp) {
+				t.Errorf("CheckAppArmor remediation contains repo-relative path %q:\n  %s",
+					fp, apparmorResult.Remediation)
+			}
+		}
+		// The "not loaded" remediation should use setup --system.
+		// Other states (not available, error) have different messages.
+		if strings.Contains(apparmorResult.Message, "not loaded") {
+			if !strings.Contains(apparmorResult.Remediation, "aibox setup --system") {
+				t.Errorf("CheckAppArmor 'not loaded' remediation should reference 'aibox setup --system', got:\n  %s",
+					apparmorResult.Remediation)
+			}
+		}
+	}
+
+	// CheckPolicyFiles: use a config with a non-existent org baseline path
+	// to trigger the missing-policy remediation.
+	cfg := &config.Config{
+		Policy: config.PolicyConfig{
+			OrgBaselinePath: "/etc/aibox/org-policy.yaml",
+		},
+	}
+	policyResult := CheckPolicyFiles(cfg)
+	if policyResult.Remediation != "" {
+		for _, fp := range forbiddenPaths {
+			if strings.Contains(policyResult.Remediation, fp) {
+				t.Errorf("CheckPolicyFiles remediation contains repo-relative path %q:\n  %s",
+					fp, policyResult.Remediation)
+			}
+		}
+		if !strings.Contains(policyResult.Remediation, "aibox setup --system") {
+			t.Errorf("CheckPolicyFiles remediation should reference 'aibox setup --system', got:\n  %s",
+				policyResult.Remediation)
+		}
+	}
+}
+
+// TestCheckSeccomp_RemediationContent verifies the exact remediation content
+// when the seccomp profile is not found.
+func TestCheckSeccomp_RemediationContent(t *testing.T) {
+	result := CheckSeccomp()
+	// If profile was found (CI or dev machine with it installed), skip.
+	if result.Status == "pass" {
+		t.Skip("seccomp profile found on this system; cannot test missing-profile remediation")
+	}
+
+	if !strings.Contains(result.Remediation, "bundled in the aibox binary") {
+		t.Errorf("seccomp remediation should mention embedded asset, got:\n  %s", result.Remediation)
+	}
+	if !strings.Contains(result.Remediation, "aibox setup --system") {
+		t.Errorf("seccomp remediation should reference 'aibox setup --system', got:\n  %s", result.Remediation)
+	}
+}
+
+// TestCheckPolicyFiles_RemediationIncludesConfigPath verifies that the policy
+// remediation references the configured org baseline path.
+func TestCheckPolicyFiles_RemediationIncludesConfigPath(t *testing.T) {
+	customPath := "/opt/custom/org-policy.yaml"
+	cfg := &config.Config{
+		Policy: config.PolicyConfig{
+			OrgBaselinePath: customPath,
+		},
+	}
+	result := CheckPolicyFiles(cfg)
+	if result.Status == "pass" {
+		t.Skip("policy file found; cannot test missing-policy remediation")
+	}
+
+	if !strings.Contains(result.Remediation, customPath) {
+		t.Errorf("policy remediation should include configured path %q, got:\n  %s",
+			customPath, result.Remediation)
 	}
 }
