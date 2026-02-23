@@ -46,6 +46,7 @@ func SystemSetup(cfg *config.Config) error {
 	steps := []Step{
 		{"Install seccomp profile", func() error { return installSeccomp() }},
 		{"Load AppArmor profile", func() error { return loadAppArmor() }},
+		{"Install default org policy", func() error { return installDefaultOrgPolicy(cfg) }},
 	}
 
 	if cfg.Network.Enabled {
@@ -290,6 +291,34 @@ func installSeccomp() error {
 	}
 
 	fmt.Printf("  Installed %s\n", targetPath)
+	return nil
+}
+
+func installDefaultOrgPolicy(cfg *config.Config) error {
+	policyPath := cfg.Policy.OrgBaselinePath
+	if policyPath == "" {
+		policyPath = "/etc/aibox/org-policy.yaml"
+	}
+
+	if _, err := os.Stat(policyPath); err == nil {
+		fmt.Printf("  Org policy already at %s\n", policyPath)
+		return nil
+	}
+
+	fmt.Printf("  Installing default org policy to %s\n", policyPath)
+	if err := assets.WriteDefaultOrgPolicy(policyPath); err != nil {
+		// Try with sudo via temp file.
+		tmpPath := "/tmp/aibox-org-policy.yaml"
+		if writeErr := assets.WriteDefaultOrgPolicy(tmpPath); writeErr != nil {
+			return fmt.Errorf("writing org policy: %w", writeErr)
+		}
+		if cpErr := exec.Command("sudo", "cp", tmpPath, policyPath).Run(); cpErr != nil {
+			return fmt.Errorf("installing org policy: %w (try running with sudo)", cpErr)
+		}
+		os.Remove(tmpPath)
+	}
+
+	fmt.Printf("  Installed %s\n", policyPath)
 	return nil
 }
 

@@ -1,0 +1,95 @@
+# AI-Box Organization Baseline Policy
+# This file defines the immutable org-level policy that all sandboxes must comply with.
+# Team and project policies can tighten but never loosen these settings.
+
+apiVersion: aibox.io/v1
+kind: Policy
+metadata:
+  name: org-baseline
+  scope: organization
+  immutable: true
+
+spec:
+  runtime:
+    engine: gvisor          # Required: must use gVisor (runsc)
+    fallback: deny          # No fallback to runc allowed
+
+  network:
+    default: deny           # Default-deny all outbound
+    allow:
+      - host: "harbor.internal"
+        port: 443
+        protocol: https
+        reason: "Container image registry"
+      - host: "nexus.internal"
+        port: 443
+        protocol: https
+        reason: "Package mirror"
+      - host: "git.internal"
+        port: [443, 22]
+        protocol: [https, ssh]
+        reason: "Git repository access"
+      - host: "vault.internal"
+        port: 8200
+        protocol: https
+        reason: "Credential management"
+    dns:
+      resolver: "coredns"
+      block_types: [TXT, NULL, CNAME]
+      rate_limit_qps: 10
+
+  image:
+    require_signature: true
+    signing_key: "/etc/aibox/cosign.pub"
+    registry: "harbor.internal"
+    scan_policy:
+      block_critical: true
+      block_high: false      # Warn only
+
+  credentials:
+    git_token_ttl: "4h"
+    llm_api_key_ttl: "8h"
+    package_mirror_token_ttl: "8h"
+    revoke_on_stop: true
+    no_persist_to_workspace: true
+
+  llm:
+    rate_limit_rpm: 60
+    rate_limit_tpm: 100000
+    payload_logging: true
+
+  sandbox:
+    user: dev
+    uid: 1000
+    read_only_root: true
+    capabilities: []         # cap-drop=ALL
+    no_new_privileges: true
+    seccomp_profile: "/etc/aibox/seccomp.json"
+    apparmor_profile: "aibox-sandbox"
+
+  filesystem:
+    read_only_root: true
+    writable_mounts:
+      - "/workspace"
+      - "/home/dev"
+      - "/tmp"
+    denied_paths:
+      - "/etc/shadow"
+      - "/etc/passwd"
+      - "/proc/kcore"
+      - "/sys/firmware"
+
+  tools:
+    risk_classes:
+      safe:
+        - "file_read"
+        - "file_write"       # Within /workspace only
+        - "shell_command"    # Within sandbox
+        - "web_search"
+      review_required:
+        - "git_push"
+        - "external_api_call"
+      blocked_by_default:
+        - "arbitrary_network"
+        - "credential_access"
+        - "system_modify"

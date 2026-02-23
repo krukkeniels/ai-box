@@ -91,3 +91,29 @@ func TestWriteAppArmorProfile(t *testing.T) {
 		t.Errorf("expected permissions 0644, got %o", perm)
 	}
 }
+
+func TestDefaultOrgPolicy(t *testing.T) {
+	data := DefaultOrgPolicy()
+	if len(data) == 0 {
+		t.Fatal("DefaultOrgPolicy() returned empty data")
+	}
+	content := string(data)
+	if !strings.Contains(content, "apiVersion") {
+		t.Error("org policy should contain an 'apiVersion' field")
+	}
+}
+
+func TestWriteDefaultOrgPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subdir", "org-policy.yaml")
+	if err := WriteDefaultOrgPolicy(path); err != nil {
+		t.Fatalf("WriteDefaultOrgPolicy() error: %v", err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading written file: %v", err)
+	}
+	if string(written) != string(DefaultOrgPolicy()) {
+		t.Error("written org policy does not match embedded content")
+	}
+}
