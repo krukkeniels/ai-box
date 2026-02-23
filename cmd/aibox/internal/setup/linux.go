@@ -80,8 +80,9 @@ func SystemSetup(cfg *config.Config) error {
 
 // SetupOptions controls optional setup behavior.
 type SetupOptions struct {
-	Force   bool // re-run all steps regardless of existing state
-	Offline bool // skip steps that require network access
+	Force    bool // re-run all steps regardless of existing state
+	Offline  bool // skip steps that require network access
+	SkipPull bool // skip image pull even if not cached
 }
 
 // UserSetup performs unprivileged setup that each developer runs. It verifies
@@ -154,7 +155,7 @@ func UserSetupWithOptions(cfg *config.Config, opts SetupOptions) error {
 				fmt.Println("  Skipped (--offline mode)")
 				return nil
 			}
-			return pullBaseImage(cfg)
+			return pullBaseImage(cfg, opts.SkipPull)
 		}, true},
 	}
 
@@ -188,7 +189,7 @@ func LinuxSetup(cfg *config.Config) error {
 		{"Install seccomp profile", func() error { return installSeccomp() }},
 		{"Load AppArmor profile", func() error { return loadAppArmor() }},
 		{"Create default configuration", func() error { return createDefaultConfig() }},
-		{"Pull base image", func() error { return pullBaseImage(cfg) }},
+		{"Pull base image", func() error { return pullBaseImage(cfg, false) }},
 	}
 
 	// Phase 2: Network security steps.
@@ -351,7 +352,7 @@ func createDefaultConfig() error {
 	return nil
 }
 
-func pullBaseImage(cfg *config.Config) error {
+func pullBaseImage(cfg *config.Config, skipPull bool) error {
 	rtPath, err := exec.LookPath(cfg.Runtime)
 	if err != nil {
 		return fmt.Errorf("%s not found: %w", cfg.Runtime, err)
@@ -359,7 +360,12 @@ func pullBaseImage(cfg *config.Config) error {
 
 	// Check if image is already cached.
 	if err := exec.Command(rtPath, "image", "exists", cfg.Image).Run(); err == nil {
-		fmt.Printf("  Image %s already cached\n", cfg.Image)
+		fmt.Printf("  Local image found: %s (using local cache)\n", cfg.Image)
+		return nil
+	}
+
+	if skipPull {
+		fmt.Println("  Image not cached locally (--skip-pull specified, skipping)")
 		return nil
 	}
 

@@ -439,6 +439,19 @@ func (m *Manager) Status() (*StatusInfo, error) {
 	return info, nil
 }
 
+// normalizeImageRef adds localhost/ prefix to unqualified short names when
+// the image exists locally. This prevents Podman from trying to pull from
+// unqualified-search registries.
+func normalizeImageRef(ref string, existsLocally bool) string {
+	if strings.Contains(ref, "/") {
+		return ref // Already qualified.
+	}
+	if existsLocally {
+		return "localhost/" + ref
+	}
+	return ref
+}
+
 // ensureImage pulls the image if it's not available locally.
 func (m *Manager) ensureImage(image string) error {
 	// Use "image inspect" which works with both podman and docker,
@@ -446,6 +459,16 @@ func (m *Manager) ensureImage(image string) error {
 	if err := m.runQuiet("image", "inspect", image); err == nil {
 		slog.Debug("image already cached", "image", image)
 		return nil
+	}
+
+	// For unqualified short names (e.g. "aibox-base:24.04"), check whether
+	// the image exists under the localhost/ prefix before pulling remotely.
+	if !strings.Contains(image, "/") {
+		candidate := "localhost/" + image
+		if err := m.runQuiet("image", "inspect", candidate); err == nil {
+			slog.Debug("image found with localhost/ prefix", "original", image, "resolved", candidate)
+			return nil
+		}
 	}
 
 	fmt.Printf("Pulling image %s ...\n", image)

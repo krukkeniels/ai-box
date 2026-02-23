@@ -12,6 +12,7 @@ var (
 	systemSetup bool
 	forceSetup  bool
 	offlineMode bool
+	skipPull    bool
 )
 
 var setupCmd = &cobra.Command{
@@ -40,8 +41,9 @@ There are two phases:
     - Runs health checks
 
 Flags:
-  --force    Re-run all steps regardless of existing state
-  --offline  Skip steps that require network access
+  --force      Re-run all steps regardless of existing state
+  --offline    Skip steps that require network access
+  --skip-pull  Skip image pull even if not cached locally
 
 On WSL2, setup additionally:
   - Checks WSL2 kernel version (5.15+ required for gVisor systrap)
@@ -54,6 +56,7 @@ func init() {
 	setupCmd.Flags().BoolVar(&systemSetup, "system", false, "run privileged system-level setup (requires root)")
 	setupCmd.Flags().BoolVar(&forceSetup, "force", false, "re-run all steps regardless of existing state")
 	setupCmd.Flags().BoolVar(&offlineMode, "offline", false, "skip steps that require network access")
+	setupCmd.Flags().BoolVar(&skipPull, "skip-pull", false, "skip image pull even if not cached locally")
 	rootCmd.AddCommand(setupCmd)
 }
 
@@ -65,8 +68,9 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := setup.SetupOptions{
-		Force:   forceSetup,
-		Offline: offlineMode,
+		Force:    forceSetup,
+		Offline:  offlineMode,
+		SkipPull: skipPull,
 	}
 
 	if hostInfo.IsWSL2 {
