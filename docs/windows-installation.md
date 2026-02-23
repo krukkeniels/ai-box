@@ -219,7 +219,15 @@ Then verify everything is working:
 aibox doctor
 ```
 
-All checks should show `PASS`. If any fail, see [Troubleshooting](#troubleshooting) below.
+All checks should show `[OK]` or `[INFO]`. `[INFO]` results are expected for your environment. Only `[FAIL]` results need attention — see [Troubleshooting](#troubleshooting) below.
+
+> **WSL2 Reality Check**: In practice, some checks will show `[INFO]` instead of `[OK]` on WSL2. This is expected:
+>
+> - **AppArmor**: Shows `[INFO]` — AppArmor is not available in WSL2 kernels. Security relies on gVisor + seccomp.
+> - **gVisor disabled**: Shows `[INFO]` if you're using the minimal config (gVisor is opt-in).
+> - **Org policy missing**: Shows `[INFO]` for personal/minimal setups.
+>
+> Only `[FAIL]` results need attention. Run `aibox doctor --strict` for enterprise-level validation.
 
 ---
 
@@ -258,6 +266,19 @@ aibox stop
 ```
 
 You now have a working AI-Box setup on Windows 11.
+
+---
+
+## WSL2 Gotchas
+
+Common surprises when running AI-Box on WSL2:
+
+- **Use VS Code from WSL** (`code .` in WSL terminal) so Remote extensions use Linux SSH, not Windows OpenSSH.
+- **AppArmor warnings are expected** — WSL2 kernels don't include AppArmor. This is fine.
+- **If GHCR pull fails**, build the image locally (`make image-base`) and AI-Box will use the local cache automatically.
+- **If `aibox setup --system` says "profile source not found"**, you installed from binary. Run `sudo aibox setup --system` — the profiles are bundled in the binary (v0.9+).
+- **If VS Code SSH shows `OpenSSH_for_Windows`** in logs, you're connecting from Windows SSH, not WSL SSH. Close VS Code and reopen via `code .` inside WSL.
+- **If SSH port is open but connection drops** after key exchange, run `aibox doctor --ide` for detailed SSH diagnostics.
 
 ---
 
@@ -350,6 +371,12 @@ The base image at `ghcr.io/krukkeniels/aibox/base:24.04` may not be published ye
 git clone https://github.com/krukkeniels/ai-box.git
 cd ai-box
 make image-base
+```
+
+After building locally, the image is stored as `aibox-base:24.04`. AI-Box will find and use this local image automatically. If Podman reports "short-name resolution" errors, set the full image reference in your config:
+
+```bash
+aibox config set image localhost/aibox-base:24.04
 ```
 
 Then retry `aibox start`. See the [installation guide](installation.md#image-pull-fails-403-forbidden-or-timeout) for variant images.
