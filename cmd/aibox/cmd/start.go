@@ -97,6 +97,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if len(credEnvVars) == 0 && provErr == nil {
+		slog.Info("no optional credentials configured (git, llm, mirror) — this is normal for personal use")
+	}
+
 	// Policy engine (Phase 3).
 	// Load the org/team/project policy hierarchy, validate, merge, and
 	// log the container_start event to the decision audit log.

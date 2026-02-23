@@ -40,7 +40,7 @@ func (b *Broker) InjectEnvVars(ctx context.Context) ([]string, error) {
 	for _, ct := range AllCredentialTypes {
 		cred, err := b.provider.Get(ctx, ct)
 		if err != nil {
-			b.logger.Warn("credential not configured, skipping",
+			b.logger.Debug("credential not configured, skipping",
 				"type", string(ct),
 				"provider", b.provider.Name(),
 			)
